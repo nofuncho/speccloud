@@ -1,0 +1,14 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* App-wide styles */
+html, body, #__next { height: 100%; }
+:root { font-family: "Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { --bg: #F8F9FA; --panel: #FFFFFF; --muted: #E5E7EB; }
+body { background: var(--bg); color: #0F172A; }
+
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background-color: #E5E7EB; border-radius: 8px; }

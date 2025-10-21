@@ -1,0 +1,155 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ===========================
+ * Auth (NextAuth + Credentials)
+ * ===========================
+ */
+model User {
+  id           String    @id @default(cuid())
+  name         String?
+  email        String    @unique
+  password     String    // Credentials Provider용 해시 저장
+  image        String?
+  emailVerified DateTime?
+
+  // NextAuth relations
+  accounts     Account[]
+  sessions     Session[]
+
+  // App relations
+  folders      Folder[]
+  documents    Document[]
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?  @db.Text
+  access_token      String?  @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?  @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/**
+ * ===========================
+ * App Models
+ * ===========================
+ */
+
+model Folder {
+  id          String      @id @default(cuid())
+  name        String
+  type        FolderType
+  parentId    String?
+  parent      Folder?     @relation("FolderToChildren", fields: [parentId], references: [id])
+  children    Folder[]    @relation("FolderToChildren")
+
+  // 소유자
+  createdById String
+  createdBy   User        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // 관계
+  documents   Document[]
+
+  // 인덱스/유니크 (동일 부모 내 동일 이름 방지)
+  @@index([parentId])
+  @@index([type, createdAt])
+  @@index([createdById, parentId])
+  @@unique([createdById, parentId, name]) // 같은 사용자/같은 부모 아래 동일 폴더명 방지
+}
+
+enum FolderType {
+  ROOT_COVERLETTER
+  ROOT_RESUME
+  ROOT_PORTFOLIO
+  CUSTOM
+}
+
+model Document {
+  id          String    @id @default(cuid())
+
+  // 관계
+  folderId    String
+  folder      Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  // 소유자
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  // 기본 필드 (UI에서 사용)
+  title       String
+  content     Json
+
+  // 옵션 필드 (UI 테이블 컬럼)
+  company     String?   // ✅ 회사명
+  role        String?   // ✅ 직무/포지션
+  status      String?   // ✅ "draft" | "final" | "verified" 등 라벨 문자열
+  templateKey String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([folderId])
+  @@index([updatedAt])
+  @@index([createdById, updatedAt])
+}
+
+model Template {
+  key        String   @id
+  label      String
+  category   TemplateCategory
+  schema     Json
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([category, isActive])
+}
+
+enum TemplateCategory {
+  COVERLETTER
+  RESUME
+  PORTFOLIO
+}
