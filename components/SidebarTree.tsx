@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
-import { LogIn, UserCircle2 } from "lucide-react";
+import { CircleUserRound, LogIn } from "lucide-react";
 
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -32,20 +32,23 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
   if (!userId) {
     return (
       <div className="space-y-3 p-3">
-        <div className="flex items-center justify-between rounded-lg bg-white/60 px-3 py-2">
-          <Link href="/" className="inline-flex h-8 w-8 items-center justify-center">
-            <Image src="/spec-logo.svg" alt="SpecCloud 로고" width={28} height={28} priority />
+        <div className="flex items-center justify-between rounded-2xl bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
+          <Link
+            href="/"
+            className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white shadow"
+          >
+            <Image src="/spec-logo.svg" alt="SpecCloud logo" width={40} height={40} priority />
           </Link>
           <Link
             href="/login"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100"
-            aria-label="로그인"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-600 transition hover:bg-sky-200"
+            aria-label="Sign in"
           >
-            <LogIn className="h-5 w-5" />
+            <LogIn className="h-5 w-5" strokeWidth={1.6} />
           </Link>
         </div>
-        <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-sm text-gray-500">
-          문서를 관리하려면 먼저 로그인해 주세요.
+        <div className="rounded-xl border border-dashed border-gray-200 px-3 py-4 text-sm text-gray-600">
+          Sign in to create folders and keep your documents in sync.
         </div>
       </div>
     );
@@ -67,21 +70,24 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
   return (
     <div className="space-y-3 p-3">
-      <div className="flex items-center justify-between rounded-lg bg-white/60 px-3 py-2">
-        <Link href="/app" className="inline-flex h-8 w-8 items-center justify-center">
-          <Image src="/spec-logo.svg" alt="SpecCloud 로고" width={28} height={28} priority />
+      <div className="flex items-center justify-between rounded-2xl bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
+        <Link
+          href="/app"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white shadow"
+        >
+          <Image src="/spec-logo.svg" alt="SpecCloud logo" width={40} height={40} priority />
         </Link>
         <Link
           href="/app"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100"
-          aria-label="계정"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-800"
+          aria-label="Account"
         >
-          <UserCircle2 className="h-5 w-5" />
+          <CircleUserRound className="h-5 w-5" strokeWidth={1.6} />
         </Link>
       </div>
       <nav className="space-y-2">
         {roots.length === 0 ? (
-          <div className="rounded px-2 py-2 text-sm text-gray-500">아직 폴더가 없습니다.</div>
+          <div className="rounded px-2 py-2 text-sm text-gray-500">No folders yet.</div>
         ) : (
           roots.map((root) => (
             <FolderNode
