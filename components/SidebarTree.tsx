@@ -1,6 +1,7 @@
-// components/SidebarTree.tsx
+import Image from "next/image";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
+import { LogIn, UserCircle2 } from "lucide-react";
 
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -30,8 +31,22 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
   if (!userId) {
     return (
-      <div className="p-3 text-sm text-gray-500">
-        로그인 후 이용할 수 있습니다.
+      <div className="space-y-3 p-3">
+        <div className="flex items-center justify-between rounded-lg bg-white/60 px-3 py-2">
+          <Link href="/" className="inline-flex h-8 w-8 items-center justify-center">
+            <Image src="/spec-logo.svg" alt="SpecCloud 로고" width={28} height={28} priority />
+          </Link>
+          <Link
+            href="/login"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100"
+            aria-label="로그인"
+          >
+            <LogIn className="h-5 w-5" />
+          </Link>
+        </div>
+        <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-sm text-gray-500">
+          문서를 관리하려면 먼저 로그인해 주세요.
+        </div>
       </div>
     );
   }
@@ -52,14 +67,21 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
   return (
     <div className="space-y-3 p-3">
-      <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wider text-gray-500">
-        Spec 폴더
+      <div className="flex items-center justify-between rounded-lg bg-white/60 px-3 py-2">
+        <Link href="/app" className="inline-flex h-8 w-8 items-center justify-center">
+          <Image src="/spec-logo.svg" alt="SpecCloud 로고" width={28} height={28} priority />
+        </Link>
+        <Link
+          href="/app"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100"
+          aria-label="계정"
+        >
+          <UserCircle2 className="h-5 w-5" />
+        </Link>
       </div>
       <nav className="space-y-2">
         {roots.length === 0 ? (
-          <div className="rounded px-2 py-2 text-sm text-gray-500">
-            아직 폴더가 없습니다.
-          </div>
+          <div className="rounded px-2 py-2 text-sm text-gray-500">아직 폴더가 없습니다.</div>
         ) : (
           roots.map((root) => (
             <FolderNode
@@ -83,12 +105,7 @@ type NodeProps = {
   depth: number;
 };
 
-function FolderNode({
-  node,
-  childrenMap,
-  activeFolderId,
-  depth,
-}: NodeProps) {
+function FolderNode({ node, childrenMap, activeFolderId, depth }: NodeProps) {
   const children = childrenMap.get(node.id) ?? [];
   const isActive = activeFolderId === node.id;
 
