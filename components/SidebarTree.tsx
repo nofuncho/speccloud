@@ -17,7 +17,13 @@ type Props = {
   activeFolderId: string | null;
 };
 
-const AVATAR_COLORS = ["#2563EB", "#EC4899", "#9333EA", "#059669", "#F59E0B", "#0EA5E9", "#14B8A6"];
+const AVATAR_COLORS = ["#1D4ED8", "#EC4899", "#9333EA", "#059669", "#F59E0B", "#0EA5E9", "#14B8A6"];
+
+const DOCUMENT_FEATURES = ["이력서", "자기소개서", "포트폴리오", "경력기술서", "AI탐지기", "모의서류평가"];
+const INTERVIEW_FEATURES = ["모의면접", "면접오답노트"];
+const CAREER_FEATURES = ["프로젝트 정리", "연봉 계산기"];
+const BASE_INDENT = 16;
+const CHILD_INDENT_STEP = 14;
 
 function toAppUrl(params: { folderId?: string | null; docId?: string | null }) {
   const sp = new URLSearchParams();
@@ -78,9 +84,16 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
   const { initial, color } = getInitialAndColor(session?.user?.name, session?.user?.email ?? undefined);
   const avatarImage = session?.user?.image ?? null;
+  const existingFolderNames = new Set(all.map((folder) => folder.name));
+  const documentFeatures = DOCUMENT_FEATURES.filter((item) => !existingFolderNames.has(item));
+  const documentRootSet = new Set(DOCUMENT_FEATURES);
+  const documentRoots = roots.filter((root) => documentRootSet.has(root.name));
+  const otherRoots = roots.filter((root) => !documentRootSet.has(root.name));
+  const hasDocumentGroup = documentRoots.length > 0 || documentFeatures.length > 0;
+  const hasAnyNavItems = hasDocumentGroup || otherRoots.length > 0;
 
   return (
-    <div className="space-y-4 p-3">
+    <div className="flex h-full flex-col p-3">
       <div className="flex items-center justify-between px-1">
         <Link href="/app" className="inline-flex h-12 w-12 items-center justify-center">
           <Image src="/spec-logo.svg" alt="SpecCloud logo" width={40} height={40} priority />
@@ -104,21 +117,71 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
           )}
         </Link>
       </div>
-      <nav className="space-y-2">
-        {roots.length === 0 ? (
+      <nav className="mt-4 flex-1 space-y-4 text-[15px]">
+        {!hasAnyNavItems ? (
           <div className="px-2 py-2 text-sm text-gray-500">아직 폴더가 없습니다.</div>
         ) : (
-          roots.map((root) => (
-            <FolderNode
-              key={root.id}
-              node={root}
-              childrenMap={childrenMap}
-              activeFolderId={activeFolderId}
-              depth={0}
-            />
-          ))
+          <>
+            {hasDocumentGroup && (
+              <div className="space-y-2">
+                <p className="pl-4 pr-2 text-xs font-semibold uppercase tracking-wide text-gray-500">문서</p>
+                <div className="space-y-1">
+                  {documentRoots.map((root) => (
+                    <FolderNode
+                      key={root.id}
+                      node={root}
+                      childrenMap={childrenMap}
+                      activeFolderId={activeFolderId}
+                      depth={0}
+                    />
+                  ))}
+                  {documentFeatures.map((item) => (
+                    <DocumentFeaturePlaceholder key={item} label={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {otherRoots.map((root) => (
+              <FolderNode
+                key={root.id}
+                node={root}
+                childrenMap={childrenMap}
+                activeFolderId={activeFolderId}
+                depth={0}
+              />
+            ))}
+          </>
         )}
+        <div className="border-t border-gray-200 pt-4">
+          <FeatureSection title="면접대비" items={INTERVIEW_FEATURES} />
+        </div>
+        <div className="border-t border-gray-200 pt-4">
+          <FeatureSection title="이직준비" items={CAREER_FEATURES} />
+        </div>
       </nav>
+      <footer className="mt-auto space-y-3 border-t border-gray-200 pt-4 text-[13px] text-gray-500">
+        <div className="space-y-1" style={{ paddingLeft: BASE_INDENT }}>
+          <p className="font-semibold text-gray-600">고객센터</p>
+          <p className="font-semibold text-gray-600">공지사항</p>
+        </div>
+        <div className="space-y-1 text-xs leading-relaxed text-gray-400" style={{ paddingLeft: BASE_INDENT }}>
+          <div className="flex flex-wrap gap-x-2">
+            <Link href="/terms" className="hover:text-[#1D4ED8]">
+              약관
+            </Link>
+            <Link href="/terms/premium" className="hover:text-[#1D4ED8]">
+              이용약관
+            </Link>
+            <Link href="/terms/business" className="hover:text-[#1D4ED8]">
+              사업자정보
+            </Link>
+            <Link href="/terms/privacy" className="hover:text-[#1D4ED8]">
+              개인정보처리방침
+            </Link>
+          </div>
+          <p className="text-gray-400">© 2024 SpecCloud Corp.</p>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -133,31 +196,55 @@ type NodeProps = {
 function FolderNode({ node, childrenMap, activeFolderId, depth }: NodeProps) {
   const children = childrenMap.get(node.id) ?? [];
   const isActive = activeFolderId === node.id;
+  const depthFontClasses = depth === 0 ? "text-[15px] font-semibold text-gray-800" : "text-sm text-gray-600";
+  const activeClasses = isActive ? "bg-[#E0E7FF] text-[#1D4ED8]" : "hover:bg-gray-100 hover:text-[#1D4ED8]";
+  const paddingLeft = BASE_INDENT + depth * CHILD_INDENT_STEP;
 
   return (
     <div>
       <Link
         href={toAppUrl({ folderId: node.id, docId: null })}
-        className={`block rounded px-2 py-1 text-sm transition ${
-          isActive ? "bg-blue-100 font-semibold text-blue-700" : "hover:bg-gray-100"
-        }`}
-        style={{ paddingLeft: 8 + depth * 12 }}
+        className={`block rounded py-2 pr-2 transition ${depthFontClasses} ${activeClasses}`}
+        style={{ paddingLeft }}
       >
         {node.name}
       </Link>
-      {children.length > 0 && (
-        <div className="mt-1 space-y-1">
-          {children.map((child) => (
-            <FolderNode
-              key={child.id}
-              node={child}
-              childrenMap={childrenMap}
-              activeFolderId={activeFolderId}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
-      )}
+    </div>
+  );
+}
+
+type FeatureSectionProps = {
+  title: string;
+  items: string[];
+};
+
+function FeatureSection({ title, items }: FeatureSectionProps) {
+  return (
+    <div className="space-y-2">
+      <p className="pl-4 pr-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</p>
+      <ul className="space-y-1">
+        {items.map((item) => (
+          <li
+            key={item}
+            className="rounded py-2 pr-2 text-[15px] font-semibold text-gray-800 transition hover:bg-gray-100 hover:text-[#1D4ED8]"
+            style={{ paddingLeft: BASE_INDENT }}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+type DocumentFeaturePlaceholderProps = {
+  label: string;
+};
+
+function DocumentFeaturePlaceholder({ label }: DocumentFeaturePlaceholderProps) {
+  return (
+    <div className="rounded py-2 pr-2 text-[15px] font-semibold text-gray-400" style={{ paddingLeft: BASE_INDENT }}>
+      {label}
     </div>
   );
 }
