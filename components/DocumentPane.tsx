@@ -27,14 +27,19 @@ type Block =
   | { type: "doc"; html: string }
   | { type: string; text?: string; html?: string };
 
+type FolderTypeValue = "ROOT_RESUME" | "ROOT_COVERLETTER" | "ROOT_PORTFOLIO" | "CUSTOM";
+
 type Doc = {
   id: string;
   title: string;
   content: { blocks: Block[] } | null;
   templateKey?: string | null;
+  folderType?: FolderTypeValue | null;
 };
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+
+type TemplateCategory = "Resume" | "Cover Letter" | "Portfolio";
 
 type TemplateOption = {
   key: string;
@@ -45,7 +50,7 @@ type TemplateOption = {
 };
 
 type TemplateGroup = {
-  category: string;
+  category: TemplateCategory;
   icon: LucideIcon;
   toneClass: string;
   templates: TemplateOption[];
@@ -58,55 +63,249 @@ const TEMPLATE_GROUPS: TemplateGroup[] = [
     toneClass: "bg-sky-100 text-sky-700",
     templates: [
       {
-        key: "resume_classic",
-        label: "Classic Resume",
-        description: "Summary, experience, education, skills.",
+        key: "resume_profile_focus",
+        label: "프로필 스냅샷",
+        description: "상단 요약과 카드형 경력 블록",
         icon: LayoutTemplate,
         html: `
-          <section>
-            <h2>Professional Summary</h2>
-            <p><strong>조동현</strong> | Product Manager | jodonghyun@example.com | 010-5291-8332</p>
-            <p>고객 여정 개선과 데이터 기반 실험을 통해 SaaS 제품의 전환율을 높여 온 5년 차 프로덕트 매니저입니다.</p>
-          </section>
-          <section>
-            <h2>Experience</h2>
-            <article>
-              <h3>스펙클라우드 | Product Manager <span>(2022.03 - 현재)</span></h3>
-              <ul>
-                <li>온보딩 플로우 개편으로 무료 체험 전환율을 28%에서 41%로 향상.</li>
-                <li>성과 지표 대시보드를 설계해 세일즈 리포트 작성 시간을 60% 단축.</li>
-              </ul>
-            </article>
-          </section>
-          <section>
-            <h2>Education</h2>
-            <p><strong>포항공과대학교</strong> | 산업공학과 (2017)</p>
+          <section style="font-family:Noto Sans KR, sans-serif; color:#1F2937;">
+            <header style="border-bottom:1px solid #E5E7EB; padding-bottom:20px; margin-bottom:24px;">
+              <h1 style="font-size:32px; font-weight:700; margin:0;">{{full_name}}</h1>
+              <p style="margin:8px 0 0; font-size:14px; color:#4B5563;">
+                {{role}} · {{phone}} · {{email}} · {{location}}
+              </p>
+            </header>
+            <section style="margin-bottom:28px;">
+              <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">간단 소개</h2>
+              <p style="line-height:1.6; font-size:14px;">{{summary}}</p>
+            </section>
+            <section>
+              <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">주요 경력</h2>
+              <article style="border:1px solid #E5E7EB; border-radius:16px; padding:16px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                  <div>
+                    <h3 style="margin:0; font-size:15px; font-weight:600;">{{experience1_company}}</h3>
+                    <p style="margin:4px 0 0; font-size:13px; color:#4B5563;">
+                      {{experience1_role}} · {{experience1_type}} · {{experience1_location}}
+                    </p>
+                  </div>
+                  <span style="font-size:12px; color:#6B7280;">{{experience1_period}}</span>
+                </div>
+                <ul style="margin:12px 0 0; padding-left:20px; font-size:13px; line-height:1.6;">
+                  <li>{{experience1_highlight1}}</li>
+                  <li>{{experience1_highlight2}}</li>
+                  <li>{{experience1_highlight3}}</li>
+                </ul>
+              </article>
+              <article style="border:1px solid #E5E7EB; border-radius:16px; padding:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                  <div>
+                    <h3 style="margin:0; font-size:15px; font-weight:600;">{{experience2_company}}</h3>
+                    <p style="margin:4px 0 0; font-size:13px; color:#4B5563;">
+                      {{experience2_role}} · {{experience2_type}} · {{experience2_location}}
+                    </p>
+                  </div>
+                  <span style="font-size:12px; color:#6B7280;">{{experience2_period}}</span>
+                </div>
+                <ul style="margin:12px 0 0; padding-left:20px; font-size:13px; line-height:1.6;">
+                  <li>{{experience2_highlight1}}</li>
+                  <li>{{experience2_highlight2}}</li>
+                  <li>{{experience2_highlight3}}</li>
+                </ul>
+              </article>
+            </section>
+            <section style="margin-top:28px; display:grid; gap:16px;">
+              <div>
+                <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">학력</h2>
+                <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
+              </div>
+              <div>
+                <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">보유 역량</h2>
+                <p style="margin:0; font-size:13px; line-height:1.6;">{{skills}}</p>
+              </div>
+            </section>
           </section>
         `.trim(),
       },
       {
-        key: "resume_modern",
-        label: "Modern Resume",
-        description: "Concise resume with metrics.",
+        key: "resume_elegant_lines",
+        label: "엘레강스 라인",
+        description: "흑백 라인과 표 정렬형 구조",
         icon: LayoutTemplate,
         html: `
-          <header>
-            <h1>조동현</h1>
-            <p>Product Manager | 서울 | jodonghyun@example.com | 010-5291-8332</p>
-          </header>
-          <section>
-            <h2>Snapshot</h2>
-            <ul>
-              <li>연간 ARR 120억 규모 SaaS 제품 로드맵 총괄.</li>
-              <li>사용자 인터뷰 120회 이상 진행하며 핵심 페인포인트 도출.</li>
-            </ul>
-          </section>
-          <section>
-            <h2>Recent Experience</h2>
-            <p>스펙클라우드에서 AI 문서 자동화 기능을 출시해 월간 활성 사용자를 35% 성장시켰습니다. 마케팅, 세일즈, 엔지니어링과 협업해 시장 요구를 제품 전략에 반영했습니다.</p>
+          <section style="font-family:Pretendard, sans-serif; color:#111827;">
+            <header style="text-align:center; padding:24px 0; border-bottom:2px solid #1F2937; margin-bottom:24px;">
+              <h1 style="margin:0; font-size:30px; letter-spacing:2px;">{{full_name}}</h1>
+              <p style="margin:8px 0 0; font-size:13px; letter-spacing:1px; text-transform:uppercase;">{{role}}</p>
+              <p style="margin:4px 0 0; font-size:12px; color:#4B5563;">{{email}} · {{phone}} · {{website}}</p>
+            </header>
+            <section style="margin-bottom:24px;">
+              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">학력사항</h2>
+              <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:12px;">
+                <tbody>
+                  <tr>
+                    <td style="padding:6px 0; width:30%;">{{education1_period}}</td>
+                    <td style="padding:6px 0; width:35%; font-weight:600;">{{education1_school}}</td>
+                    <td style="padding:6px 0;">{{education1_major}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:6px 0;">{{education2_period}}</td>
+                    <td style="padding:6px 0; font-weight:600;">{{education2_school}}</td>
+                    <td style="padding:6px 0;">{{education2_major}}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+            <section style="margin-bottom:24px;">
+              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">경력사항</h2>
+              <div style="margin-top:12px; font-size:13px;">
+                <p style="margin:0; font-weight:600;">{{experience1_company}} | {{experience1_role}}</p>
+                <p style="margin:4px 0 8px; color:#4B5563;">{{experience1_period}} · {{experience1_location}}</p>
+                <ul style="margin:0 0 12px 18px; line-height:1.6;">
+                  <li>{{experience1_detail1}}</li>
+                  <li>{{experience1_detail2}}</li>
+                </ul>
+                <p style="margin:0; font-weight:600;">{{experience2_company}} | {{experience2_role}}</p>
+                <p style="margin:4px 0 8px; color:#4B5563;">{{experience2_period}} · {{experience2_location}}</p>
+                <ul style="margin:0 0 12px 18px; line-height:1.6;">
+                  <li>{{experience2_detail1}}</li>
+                  <li>{{experience2_detail2}}</li>
+                </ul>
+              </div>
+            </section>
+            <section>
+              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">자격증 · 수상</h2>
+              <p style="margin:12px 0 0; font-size:13px; line-height:1.6;">{{certificates}}</p>
+            </section>
           </section>
         `.trim(),
       },
+      {
+        key: "resume_dark_header",
+        label: "다크 헤더",
+        description: "상단 블록과 좌우 분할 구성",
+        icon: LayoutTemplate,
+        html: `
+          <section style="font-family:Noto Sans KR, sans-serif; color:#111827;">
+            <div style="background:#1F2937; color:#F9FAFB; padding:28px; border-radius:16px 16px 0 0;">
+              <h1 style="margin:0; font-size:30px;">{{full_name}}</h1>
+              <p style="margin:6px 0 0; font-size:13px;">{{role}} · {{phone}} · {{email}}</p>
+              <p style="margin:2px 0 0; font-size:12px; color:#D1D5DB;">{{address}}</p>
+            </div>
+            <div style="display:flex; gap:24px; border:1px solid #E5E7EB; border-top:none; border-radius:0 0 16px 16px; padding:24px;">
+              <aside style="width:32%; border-right:1px solid #E5E7EB; padding-right:20px;">
+                <section style="margin-bottom:24px;">
+                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">핵심 정보</h2>
+                  <p style="margin:0; font-size:13px; line-height:1.6;">{{summary}}</p>
+                </section>
+                <section style="margin-bottom:24px;">
+                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">기술 & 스킬</h2>
+                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
+                    <li>{{skill1}}</li>
+                    <li>{{skill2}}</li>
+                    <li>{{skill3}}</li>
+                    <li>{{skill4}}</li>
+                  </ul>
+                </section>
+                <section>
+                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">학력</h2>
+                  <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
+                </section>
+              </aside>
+              <main style="flex:1;">
+                <section style="margin-bottom:24px;">
+                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">경력 요약</h2>
+                  <div style="border-left:3px solid #1D4ED8; padding-left:16px;">
+                    <h3 style="margin:0; font-size:15px;">{{experience1_company}}</h3>
+                    <p style="margin:4px 0; font-size:13px; color:#4B5563;">{{experience1_role}} · {{experience1_period}}</p>
+                    <p style="margin:0 0 12px; font-size:13px; line-height:1.6;">{{experience1_summary}}</p>
+                    <h3 style="margin:0; font-size:15px;">{{experience2_company}}</h3>
+                    <p style="margin:4px 0; font-size:13px; color:#4B5563;">{{experience2_role}} · {{experience2_period}}</p>
+                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience2_summary}}</p>
+                  </div>
+                </section>
+                <section>
+                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">프로젝트 & 성과</h2>
+                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
+                    <li>{{project1}}</li>
+                    <li>{{project2}}</li>
+                    <li>{{project3}}</li>
+                  </ul>
+                </section>
+              </main>
+            </div>
+          </section>
+        `.trim(),
+      },
+      {
+        key: "resume_split_columns",
+        label: "투 콜럼 미니멀",
+        description: "양옆 정보 분할 + 프로필 영역",
+        icon: LayoutTemplate,
+        html: `
+          <section style="font-family:Pretendard, sans-serif; color:#1F2937; border:1px solid #E5E7EB; border-radius:18px; overflow:hidden;">
+            <header style="display:flex; align-items:center; gap:24px; background:#F9FAFB; padding:24px;">
+              <div style="width:92px; height:92px; border-radius:50%; background:#E5E7EB; display:flex; align-items:center; justify-content:center;">
+                <span style="font-size:32px; font-weight:700; color:#9CA3AF;">{{initials}}</span>
+              </div>
+              <div>
+                <h1 style="margin:0; font-size:28px;">{{full_name}}</h1>
+                <p style="margin:4px 0 0; font-size:14px; color:#4B5563;">{{role}}</p>
+                <p style="margin:2px 0 0; font-size:12px; color:#6B7280;">{{email}} · {{phone}} · {{linkedin}}</p>
+              </div>
+            </header>
+            <div style="display:flex;">
+              <aside style="width:34%; border-right:1px solid #E5E7EB; padding:24px;">
+                <section style="margin-bottom:20px;">
+                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">ABOUT</h2>
+                  <p style="margin:0; font-size:13px; line-height:1.6;">{{summary}}</p>
+                </section>
+                <section style="margin-bottom:20px;">
+                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">SKILLS</h2>
+                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
+                    <li>{{skill1}}</li>
+                    <li>{{skill2}}</li>
+                    <li>{{skill3}}</li>
+                    <li>{{skill4}}</li>
+                  </ul>
+                </section>
+                <section>
+                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">LANGUAGES</h2>
+                  <p style="margin:0; font-size:13px; line-height:1.6;">{{languages}}</p>
+                </section>
+              </aside>
+              <main style="flex:1; padding:24px;">
+                <section style="margin-bottom:20px;">
+                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Career Experience</h2>
+                  <div style="margin-bottom:16px;">
+                    <h3 style="margin:0; font-size:14px;">{{experience1_role}} @ {{experience1_company}}</h3>
+                    <p style="margin:4px 0; font-size:12px; color:#6B7280;">{{experience1_period}} · {{experience1_location}}</p>
+                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience1_summary}}</p>
+                  </div>
+                  <div>
+                    <h3 style="margin:0; font-size:14px;">{{experience2_role}} @ {{experience2_company}}</h3>
+                    <p style="margin:4px 0; font-size:12px; color:#6B7280;">{{experience2_period}} · {{experience2_location}}</p>
+                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience2_summary}}</p>
+                  </div>
+                </section>
+                <section style="margin-bottom:20px;">
+                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Education</h2>
+                  <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
+                </section>
+                <section>
+                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Projects & Awards</h2>
+                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
+                    <li>{{achievement1}}</li>
+                    <li>{{achievement2}}</li>
+                    <li>{{achievement3}}</li>
+                  </ul>
+                </section>
+              </main>
+            </div>
+          </section>
+        `.trim(),
+      },
+
     ],
   },
   {
@@ -216,6 +415,13 @@ const TEMPLATE_GROUPS: TemplateGroup[] = [
   },
 ];
 
+const FOLDER_CATEGORY_MAP: Record<FolderTypeValue, TemplateCategory | null> = {
+  ROOT_RESUME: "Resume",
+  ROOT_COVERLETTER: "Cover Letter",
+  ROOT_PORTFOLIO: "Portfolio",
+  CUSTOM: null,
+};
+
 const TEMPLATE_MAP: Record<string, TemplateOption> = TEMPLATE_GROUPS.reduce(
   (acc, group) => {
     group.templates.forEach((tpl) => {
@@ -251,10 +457,17 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const currentHtml = useMemo(() => blockHtml(blocks), [blocks]);
   const placeholderKeys = useMemo(() => extractTemplateKeys(currentHtml), [currentHtml]);
+  const activeCategory = useMemo(() => {
+    if (!doc?.folderType) return null;
+    return FOLDER_CATEGORY_MAP[doc.folderType] ?? null;
+  }, [doc?.folderType]);
   const filteredGroups = useMemo(() => {
     const term = templateSearch.trim().toLowerCase();
-    if (!term) return TEMPLATE_GROUPS;
-    return TEMPLATE_GROUPS
+    const baseGroups = activeCategory
+      ? TEMPLATE_GROUPS.filter((group) => group.category === activeCategory)
+      : TEMPLATE_GROUPS;
+    if (!term) return baseGroups;
+    return baseGroups
       .map((group) => ({
         ...group,
         templates: group.templates.filter((tpl) => {
@@ -263,7 +476,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
         }),
       }))
       .filter((group) => group.templates.length > 0);
-  }, [templateSearch]);
+  }, [templateSearch, activeCategory]);
 
   useEffect(() => {
     fieldsRef.current = fields;

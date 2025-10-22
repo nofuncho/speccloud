@@ -7,12 +7,25 @@ export async function GET(req: Request) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  const doc = await prisma.document.findUnique({ where: { id } });
+  const doc = await prisma.document.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      templateKey: true,
+      folder: {
+        select: { type: true },
+      },
+    },
+  });
   if (!doc) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   return NextResponse.json({
     id: doc.id,
     title: doc.title,
     content: doc.content,
+    templateKey: doc.templateKey,
+    folderType: doc.folder?.type ?? null,
   });
 }
