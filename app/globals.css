@@ -12,3 +12,6 @@ body { background: var(--bg); color: #0F172A; }
 
 .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
 .scroll-thin::-webkit-scrollbar-thumb { background-color: #E5E7EB; border-radius: 8px; }
+
+/* 기존 내용 유지하고 제일 아래 한 줄 추가 */
+html, body { overflow-x: hidden; }
