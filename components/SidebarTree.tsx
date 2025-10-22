@@ -13,7 +13,13 @@ const DOCUMENT_FEATURES = ["이력서", "자기소개서", "포트폴리오", "�
 const INTERVIEW_FEATURES = ["모의면접", "면접오답노트"];
 const CAREER_FEATURES = ["프로젝트 정리", "연봉 계산기"];
 const BASE_INDENT = 16;
-const CHILD_INDENT_STEP = 14;
+const CHILD_INDENT_STEP = 14; // (더는 쓰지 않지만 남겨둠)
+
+/** 사이드바 기능 링크 매핑: 여기서만 추가/관리하면 됨 */
+const FEATURE_LINKS: Record<string, string> = {
+  "연봉 계산기": "/tools/salary",
+  // 필요 시 "프로젝트 정리": "/tools/projects" 등으로 확장
+};
 
 function toAppUrl(params: { folderId?: string | null; docId?: string | null }) {
   const sp = new URLSearchParams();
@@ -77,20 +83,12 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
     );
   }
 
-  // 폴더 트리 데이터
+  // 폴더 목록(플레이스홀더 계산 용)
   const all = await prisma.folder.findMany({
     where: { createdById: userId },
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true, parentId: true },
   });
-
-  const childrenMap = new Map<string | null, FolderSummary[]>();
-  for (const f of all) {
-    const key = f.parentId ?? null;
-    const arr = childrenMap.get(key) ?? [];
-    arr.push(f);
-    childrenMap.set(key, arr);
-  }
 
   const { initial, color } = getInitialAndColor(session?.user?.name, session?.user?.email);
   const avatar = session?.user?.image ?? null;
@@ -105,7 +103,7 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
     <div className="flex h-full flex-col">
       <Logo />
 
-      {/* Nav (여기서는 내부 스크롤 금지) */}
+      {/* Nav (하위폴더 비노출) */}
       <nav className="mt-3 flex-1 space-y-4 text-[15px] px-3">
         {!hasDocumentGroup && otherRoots.length === 0 ? (
           <div className="px-2 py-2 text-sm text-gray-500">아직 폴더가 없습니다.</div>
@@ -116,14 +114,14 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
                 <p className="pl-4 pr-2 text-xs font-semibold uppercase tracking-wide text-gray-500">문서</p>
                 <div className="space-y-1">
                   {docRoots.map((root) => (
-                    <FolderNode key={root.id} node={root} childrenMap={childrenMap} activeFolderId={activeFolderId} depth={0} />
+                    <FolderNode key={root.id} node={root} activeFolderId={activeFolderId} />
                   ))}
                   {documentFeatures.map((item) => <DocumentFeaturePlaceholder key={item} label={item} />)}
                 </div>
               </div>
             )}
             {otherRoots.map((root) => (
-              <FolderNode key={root.id} node={root} childrenMap={childrenMap} activeFolderId={activeFolderId} depth={0} />
+              <FolderNode key={root.id} node={root} activeFolderId={activeFolderId} />
             ))}
           </>
         )}
@@ -194,17 +192,15 @@ function Footer() {
 
 type NodeProps = {
   node: { id: string; name: string };
-  childrenMap: Map<string | null, FolderSummary[]>;
   activeFolderId: string | null;
-  depth: number;
 };
 
-function FolderNode({ node, childrenMap, activeFolderId, depth }: NodeProps) {
-  const children = childrenMap.get(node.id) ?? [];
+/** 루트 폴더만 단일 라인으로 표시 (하위폴더 렌더링 없음) */
+function FolderNode({ node, activeFolderId }: NodeProps) {
   const isActive = activeFolderId === node.id;
-  const depthFont = depth === 0 ? "text-[15px] font-semibold" : "text-sm";
+  const depthFont = "text-[15px] font-semibold";
   const active = isActive ? "bg-[#E0E7FF] text-[#1D4ED8]" : "hover:bg-gray-100 hover:text-[#1D4ED8]";
-  const paddingLeft = BASE_INDENT + depth * CHILD_INDENT_STEP;
+  const paddingLeft = BASE_INDENT;
 
   return (
     <div>
@@ -215,27 +211,41 @@ function FolderNode({ node, childrenMap, activeFolderId, depth }: NodeProps) {
       >
         {node.name}
       </Link>
-      {children.length > 0 && (
-        <div className="space-y-1">
-          {children.map((child) => (
-            <FolderNode key={child.id} node={child} childrenMap={childrenMap} activeFolderId={activeFolderId} depth={depth + 1} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
+/** 기능 섹션: FEATURE_LINKS에 있으면 Link, 없으면 라벨만 표시 */
 function FeatureSection({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="space-y-2">
       <p className="pl-4 text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</p>
       <ul className="space-y-1">
-        {items.map((item) => (
-          <li key={item} className="rounded py-2 pr-2 pl-4 text-[15px] font-semibold text-gray-800 hover:bg-gray-100 hover:text-[#1D4ED8] transition">
-            {item}
-          </li>
-        ))}
+        {items.map((item) => {
+          const href = FEATURE_LINKS[item];
+          const baseCls =
+            "rounded py-2 pr-2 pl-4 text-[15px] font-semibold transition";
+          if (href) {
+            return (
+              <li key={item}>
+                <Link
+                  href={href}
+                  className={`${baseCls} text-gray-800 hover:bg-gray-100 hover:text-[#1D4ED8]`}
+                >
+                  {item}
+                </Link>
+              </li>
+            );
+          }
+          return (
+            <li
+              key={item}
+              className={`${baseCls} text-gray-400`}
+            >
+              {item}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
