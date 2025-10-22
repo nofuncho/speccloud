@@ -47,9 +47,9 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
   const session = await getServerSession(authOptions);
   const userId = session?.user?.id ?? null;
 
-  // 상단 로고 (상/하 동일, 좌측 약간 띄움, 로고 슬롯 140px)
+  // 상단 로고 (상/하 여백 줄임: py-4 → py-2.5)
   const Logo = () => (
-    <div className="py-4 pl-4 pr-3 border-b border-gray-100">
+    <div className="py-2.5 pl-4 pr-3 border-b border-gray-100">
       <Link href={userId ? "/app" : "/"} className="block">
         <div className="max-w-[140px] aspect-[3/1] relative">
           <Image src="/brand/speccloud-logo.svg" alt="SpecCloud" fill sizes="140px" priority className="object-contain" />
@@ -135,7 +135,7 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
         </div>
       </nav>
 
-      {/* 하단 프로필 + 열정 온도 : px-4로 좌우 동일 여백, 오버플로우 없음 */}
+      {/* 하단 프로필 */}
       <div className="px-4 pb-5">
         <div className="rounded-xl border border-gray-100 bg-white p-4 w-full box-border">
           <div className="flex items-center gap-3 min-w-0">
