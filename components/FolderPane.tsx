@@ -1,8 +1,122 @@
 // components/FolderPane.tsx
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
-import FolderActionsClient from "./FolderPaneClient";
 import FolderTitleInline from "./FolderTitleInline";
+
+/* ✅ 추가 임포트 */
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
+import { FolderType } from "@prisma/client";
+
+/* ---------- 로컬 서버액션: Prisma 직접 호출 (folderActions 경유 X) ---------- */
+/* 보안/권한검사는 필요시 추가하세요. 지금은 에러 픽스가 목적입니다. */
+
+/** 새 폴더 생성 */
+export async function createFolderQuick(fd: FormData) {
+  "use server";
+  const parentId = String(fd.get("parentId") || "");
+  if (!parentId) throw new Error("parentId is required");
+
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id;
+  if (!userId) throw new Error("로그인이 필요합니다.");
+
+  // 부모 존재 여부 확인
+  const parent = await prisma.folder.findUnique({
+    where: { id: parentId },
+    select: { id: true },
+  });
+  if (!parent) throw new Error("부모 폴더를 찾을 수 없습니다.");
+
+  // ✅ 동일 부모(=relation) 내 중복 이름 방지: "새 폴더", "새 폴더 (2)", "새 폴더 (3)" ...
+  const baseName = "새 폴더";
+  const siblings = await prisma.folder.findMany({
+    where: { createdById: userId, parent: { is: { id: parentId } } }, // relation 조건
+    select: { name: true },
+  });
+  const taken = new Set(siblings.map(s => s.name));
+
+  // 최초 후보 계산
+  let counter = 1;
+  let candidate = baseName;
+  if (taken.has(candidate)) {
+    counter = 2;
+    while (taken.has(`${baseName} (${counter})`)) counter += 1;
+    candidate = `${baseName} (${counter})`;
+  }
+
+  // ✅ 레이스 컨디션 대비: P2002(유니크 충돌) 발생 시 숫자 한 단계 올려서 재시도
+  // 보통 1~2회면 해결됨
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await prisma.folder.create({
+        data: {
+          name: candidate,
+          type: FolderType.CUSTOM,
+          parent: { connect: { id: parentId } }, // relation connect
+          createdBy: { connect: { id: userId } },
+        },
+      });
+      revalidatePath("/app");
+      return;
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        counter = Math.max(counter, 2) + 1;
+        candidate = `${baseName} (${counter})`;
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  // 여기 왔다는 건 5회 모두 유니크 충돌 → 마지막으로 타임스탬프 suffix로 시도
+  await prisma.folder.create({
+    data: {
+      name: `${baseName} (${Date.now() % 100000})`,
+      type: FolderType.CUSTOM,
+      parent: { connect: { id: parentId } },
+      createdBy: { connect: { id: userId } },
+    },
+  });
+  revalidatePath("/app");
+}
+
+/** 새 문서 생성 (필수: content JSON + folder relation connect + createdBy) */
+export async function createDocumentQuick(fd: FormData) {
+  "use server";
+  const folderId = String(fd.get("folderId") || "");
+  const title = String(fd.get("title") || "새 문서");
+  if (!folderId) throw new Error("folderId is required");
+
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id;
+  if (!userId) throw new Error("로그인이 필요합니다.");
+
+  const folder = await prisma.folder.findUnique({
+    where: { id: folderId },
+    select: { id: true },
+  });
+  if (!folder) throw new Error("폴더를 찾을 수 없습니다.");
+
+  const initialContent = {
+    type: "doc",
+    version: 1,
+    blocks: [],
+  };
+
+  await prisma.document.create({
+    data: {
+      title,
+      status: "draft",
+      content: initialContent,
+      folder: { connect: { id: folderId } },
+      createdBy: { connect: { id: userId } },
+    },
+  });
+
+  revalidatePath("/app");
+}
 
 /* ---------- 타입 & 유틸 ---------- */
 type DocStatus = "draft" | "final" | "verified";
@@ -47,22 +161,19 @@ function toApp(params: { folderId?: string | null; docId?: string | null }) {
   return q ? `/app?${q}` : `/app`;
 }
 
-/* ---------- 심플 아이콘 ---------- */
+/* ---------- 아이콘 ---------- */
 function IconFolder(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" {...props} className={`block ${props.className ?? ""}`}>
-      <path
-        d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"
-        fill="currentColor"
-      />
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" fill="currentColor"/>
     </svg>
   );
 }
 function IconDoc(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" {...props} className={`block ${props.className ?? ""}`}>
-      <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" fill="currentColor" />
-      <path d="M14 3v5h5" fill="currentColor" />
+      <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" fill="currentColor"/>
+      <path d="M14 3v5h5" fill="currentColor"/>
     </svg>
   );
 }
@@ -87,8 +198,15 @@ function IconBriefcase(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconPlus(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...props} className={`block ${props.className ?? ""}`}>
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
 
-/* ---------- 작은 칩 컴포넌트(정렬 확실히 맞춤) ---------- */
+/* ---------- 칩 ---------- */
 function TagChip({
   icon,
   text,
@@ -111,16 +229,52 @@ function TagChip({
       <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white ring-1 ring-zinc-200">
         <span className="block">{icon}</span>
       </span>
-      {/* 폰트 메트릭 드리프트 보정 */}
       <span className="max-w-[14rem] truncate leading-none translate-y-[0.5px]">{text}</span>
     </span>
   );
 }
 
+/* ---------- 공용: +카드(이전 디자인) ---------- */
+function AddCardForm({
+  action,
+  hidden,
+  label,
+}: {
+  action: (formData: FormData) => Promise<any>;
+  hidden: Record<string, string>;
+  label: string;
+}) {
+  return (
+    <li className="h-full">
+      <form action={action} className="h-full">
+        {Object.entries(hidden).map(([k, v]) => (
+          <input key={k} type="hidden" name={k} defaultValue={v} />
+        ))}
+        <button
+          type="submit"
+          className="group block h-full w-full rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 transition hover:-translate-y-0.5 hover:border-sky-200 hover:bg-white"
+        >
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-zinc-400 group-hover:text-sky-600">
+              <IconPlus className="h-7 w-7" />
+              <span className="text-sm font-medium">{label}</span>
+            </div>
+          </div>
+        </button>
+      </form>
+    </li>
+  );
+}
+
 /* ---------- 본문 ---------- */
-export default async function FolderPane({ folderId }: { folderId: string }) {
+export default async function FolderPane({ folderId }: { folderId: string | null }) {
+  const safeFolderId = typeof folderId === "string" ? folderId : "";
+  if (!safeFolderId) {
+    return <div className="p-6 text-sm text-red-600">잘못된 접근입니다. (folderId 없음)</div>;
+  }
+
   const folder = await prisma.folder.findUnique({
-    where: { id: folderId },
+    where: { id: safeFolderId },
     select: { id: true, name: true, type: true },
   });
   if (!folder) return <div className="p-6">폴더를 찾을 수 없습니다.</div>;
@@ -131,13 +285,14 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
     folder.type === "ROOT_PORTFOLIO";
 
   const [children, documents] = await Promise.all([
+    // ❗ parentId 필드 대신 relation where 사용
     prisma.folder.findMany({
-      where: { parentId: folderId },
+      where: { parent: { is: { id: safeFolderId } } },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true },
     }),
     prisma.document.findMany({
-      where: { folderId },
+      where: { folderId: safeFolderId },
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
@@ -154,17 +309,15 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-gradient-to-b from-zinc-50 to-white">
       <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8 flex flex-col gap-6">
-        {/* 상단 헤더 */}
+        {/* 헤더 */}
         <div className="flex flex-col gap-4 border-b border-zinc-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-[220px] xl:min-w-[260px] flex items-center gap-2">
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
               <IconFolder width={16} height={16} className="opacity-80" />
             </span>
-            <FolderTitleInline folderId={folderId} initialName={folder.name} locked={isRootLocked} />
+            <FolderTitleInline folderId={safeFolderId} initialName={folder.name} locked={isRootLocked} />
           </div>
-          <div className="min-w-0 xl:flex-1">
-            <FolderActionsClient folderId={folderId} />
-          </div>
+          <div className="min-w-0 xl:flex-1" />
         </div>
 
         {/* 하위 폴더 */}
@@ -179,19 +332,26 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
             {children.length > 0 && <div className="text-xs text-zinc-500">{children.length}개</div>}
           </div>
 
-          {children.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
-              하위 폴더가 없습니다.
-            </div>
-          ) : (
-            <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {children.map((f) => (
-                <li key={f.id}>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
+            {/* 좌측 상단: 새 폴더 */}
+            <AddCardForm
+              action={createFolderQuick}
+              hidden={{ parentId: safeFolderId }}
+              label="새 폴더"
+            />
+
+            {children.length === 0 ? (
+              <li className="col-span-full rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
+                하위 폴더가 없습니다.
+              </li>
+            ) : (
+              children.map((f) => (
+                <li key={f.id} className="h-full">
                   <Link
                     href={toApp({ folderId: f.id, docId: null })}
-                    className="group block rounded-xl border border-zinc-200 bg-white p-3 transition hover:-translate-y-0.5 hover:border-sky-200"
+                    className="group block h-full rounded-xl border border-zinc-200 bg-white p-3 transition hover:-translate-y-0.5 hover:border-sky-200"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex h-full items-center justify-between">
                       <div className="flex min-w-0 items-center gap-2">
                         <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-100">
                           <IconFolder width={16} height={16} />
@@ -202,9 +362,9 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
                     </div>
                   </Link>
                 </li>
-              ))}
-            </ul>
-          )}
+              ))
+            )}
+          </ul>
         </section>
 
         {/* 문서 섹션 */}
@@ -219,13 +379,20 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
             <div className="text-xs text-zinc-500">{documents.length}개</div>
           </div>
 
-          {documents.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
-              문서가 없습니다. 템플릿으로 생성해보세요.
-            </div>
-          ) : (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {documents.map((d) => {
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch">
+            {/* 좌측 상단: 새 문서 */}
+            <AddCardForm
+              action={createDocumentQuick}
+              hidden={{ folderId: safeFolderId, title: "새 문서" }}
+              label="새 문서"
+            />
+
+            {documents.length === 0 ? (
+              <li className="col-span-full rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
+                문서가 없습니다. 템플릿으로 생성해보세요.
+              </li>
+            ) : (
+              documents.map((d) => {
                 const company = d.company ?? "";
                 const role = d.role ?? "";
                 const raw = (d.status ?? "").toString();
@@ -239,54 +406,56 @@ export default async function FolderPane({ folderId }: { folderId: string }) {
                     : "inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700";
 
                 return (
-                  <li key={d.id}>
+                  <li key={d.id} className="h-full">
                     <Link
-                      href={toApp({ folderId, docId: d.id })}
+                      href={toApp({ folderId: safeFolderId, docId: d.id })}
                       className="group block h-full rounded-xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-sky-200"
                     >
-                      {/* 제목 + 상태 */}
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="truncate text-[15px] font-semibold text-zinc-900 group-hover:text-sky-700">
-                          {d.title ?? "제목 없음"}
-                        </h3>
-                        <span className={statusClass}>
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                          {hasStatus ? statusLabel : "—"}
-                        </span>
-                      </div>
-
-                      {/* 메타(칩) */}
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {company && (
-                          <TagChip
-                            icon={<IconBuilding width={12} height={12} className="text-zinc-500" />}
-                            text={company}
-                          />
-                        )}
-                        {role && (
-                          <TagChip
-                            icon={<IconBriefcase width={12} height={12} className="text-zinc-500" />}
-                            text={role}
-                          />
-                        )}
-                        {!company && !role && (
-                          <span className="inline-flex h-8 items-center rounded-full border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[12px] text-zinc-400 leading-none">
-                            태그 추가
+                      <div className="flex h-full flex-col">
+                        {/* 제목 + 상태 */}
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="truncate text-[15px] font-semibold text-zinc-900 group-hover:text-sky-700">
+                            {d.title ?? "제목 없음"}
+                          </h3>
+                          <span className={statusClass}>
+                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                            {hasStatus ? statusLabel : "—"}
                           </span>
-                        )}
-                      </div>
+                        </div>
 
-                      {/* 수정일 */}
-                      <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-                        <span>수정일 {formatDateSafe(d.updatedAt)}</span>
-                        <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 transition group-hover:translate-x-0.5 group-hover:text-sky-500" />
+                        {/* 메타(칩) */}
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {company && (
+                            <TagChip
+                              icon={<IconBuilding width={12} height={12} className="text-zinc-500" />}
+                              text={company}
+                            />
+                          )}
+                          {role && (
+                            <TagChip
+                              icon={<IconBriefcase width={12} height={12} className="text-zinc-500" />}
+                              text={role}
+                            />
+                          )}
+                          {!company && !role && (
+                            <span className="inline-flex h-8 items-center rounded-full border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[12px] text-zinc-400 leading-none">
+                              태그 추가
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 수정일 */}
+                        <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
+                          <span>수정일 {formatDateSafe(d.updatedAt)}</span>
+                          <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 transition group-hover:translate-x-0.5 group-hover:text-sky-500" />
+                        </div>
                       </div>
                     </Link>
                   </li>
                 );
-              })}
-            </ul>
-          )}
+              })
+            )}
+          </ul>
         </section>
       </div>
     </div>

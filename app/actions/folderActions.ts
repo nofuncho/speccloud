@@ -41,6 +41,7 @@ async function assertDocumentOwner(documentId: string, userId: string) {
     throw new Error("문서에 대한 권한이 없습니다.");
 }
 
+/** ✅ 루트 폴더 보장: createdBy를 relation connect로 고정 */
 export async function ensureRootFolders() {
   const userId = await getUserId();
 
@@ -63,7 +64,10 @@ export async function ensureRootFolders() {
     await prisma.$transaction(
       toCreate.map((item) =>
         prisma.folder.create({
-          data: { ...item, createdById: userId },
+          data: {
+            ...item,
+            createdBy: { connect: { id: userId } }, // ✅ 변경
+          },
         }),
       ),
     );
@@ -72,6 +76,7 @@ export async function ensureRootFolders() {
   revalidatePath("/app");
 }
 
+/** ✅ 새 폴더 생성: createdBy를 relation connect로 고정 */
 export async function createFolder(
   parentId: string | null,
   name: string,
@@ -109,7 +114,7 @@ export async function createFolder(
         name: safeName,
         type,
         parentId,
-        createdById: userId,
+        createdBy: { connect: { id: userId } }, // ✅ 변경
       },
       select: { id: true, name: true, type: true, parentId: true, createdById: true },
     });
@@ -123,7 +128,7 @@ export async function createFolder(
           name: safeName,
           type,
           parentId,
-          createdById: userId,
+          createdBy: { connect: { id: userId } }, // ✅ 변경
         },
         select: { id: true, name: true, type: true, parentId: true, createdById: true },
       });
@@ -172,6 +177,7 @@ export async function getTemplatesByFolder(folderId: string) {
   });
 }
 
+/** ✅ 새 문서 생성: createdBy를 relation connect로 고정 */
 export async function createDocument(
   folderId: string,
   title: string,
@@ -187,11 +193,11 @@ export async function createDocument(
 
   const doc = await prisma.document.create({
     data: {
-      folderId,
+      folder: { connect: { id: folderId } },
       title: title?.trim() || "새 문서",
       templateKey,
       content: template.schema as Prisma.InputJsonValue,
-      createdById: userId,
+      createdBy: { connect: { id: userId } }, // ✅ 변경
     },
     select: { id: true, folderId: true, title: true },
   });

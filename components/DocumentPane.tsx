@@ -25,6 +25,48 @@ type Doc = {
 };
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+/* ---------- 유틸 공통 ---------- */
+/** Mac/Win 모두 대응 */
+const isCmdOrCtrl = (e: KeyboardEvent | React.KeyboardEvent) => (e.metaKey || e.ctrlKey);
+
+/** 허용 태그만 남기고 붙여넣기 sanitize (간단 버전) */
+function sanitizeHtml(html: string): string {
+  const ALLOWED = new Set(["P","DIV","H1","H2","UL","OL","LI","BLOCKQUOTE","PRE","CODE","A","IMG","STRONG","EM","U","BR","HR"]);
+  const WRAP = document.createElement("div");
+  WRAP.innerHTML = html;
+
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      if (!ALLOWED.has(el.tagName)) {
+        // 허용 안 되면 텍스트만 남김
+        const text = document.createTextNode(el.textContent || "");
+        el.replaceWith(text);
+        return;
+      }
+      // 위험 속성 제거
+      Array.from(el.attributes).forEach(attr => {
+        const name = attr.name.toLowerCase();
+        const isAllowedAttr =
+          (el.tagName === "A" && (name === "href" || name === "target" || name === "rel")) ||
+          (el.tagName === "IMG" && (name === "src" || name === "alt"));
+        if (!isAllowedAttr) el.removeAttribute(name);
+      });
+      // 인라인 스타일 제거
+      el.removeAttribute("style");
+    }
+    // 하위 순회
+    let child = node.firstChild;
+    while (child) {
+      const next = child.nextSibling;
+      walk(child);
+      child = next;
+    }
+  };
+  walk(WRAP);
+  return WRAP.innerHTML;
+}
+
 /* ---------- 컴포넌트 ---------- */
 export default function DocumentPane({ docId }: { docId: string }) {
   /* 상태 */
@@ -53,7 +95,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const lastSavedTitleRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* /, ESC */
+  /* /, ESC — (슬래시 메뉴 UI는 추후 연결하려고 남겨둠) */
   const [slashOpen, setSlashOpen] = useState(false);
 
   /* 미리보기 모달 */
@@ -64,16 +106,24 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* 배너 위치 기준 */
   const writerPaneRef = useRef<HTMLDivElement | null>(null);
   const [bannerCenterX, setBannerCenterX] = useState<number | null>(null);
+
   useEffect(() => {
     const reposition = () => {
       const r = writerPaneRef.current?.getBoundingClientRect();
       if (!r) return;
       setBannerCenterX(Math.round(r.left + r.width / 2));
     };
+
+    // ResizeObserver로 사이즈 변화에 더 정확히 반응
+    const ro = new ResizeObserver(reposition);
+    if (writerPaneRef.current) ro.observe(writerPaneRef.current);
+
     reposition();
     window.addEventListener("resize", reposition);
     window.addEventListener("scroll", reposition, true);
+
     return () => {
+      ro.disconnect();
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
@@ -187,7 +237,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [fields, blocks]
   );
 
-  /* Rich-text exec */
+  /* Rich-text exec (execCommand, deprecated이지만 브라우저 지원 고려해 유지) */
   const exec = useCallback((cmd: string, value?: string) => {
     document.execCommand(cmd, false, value);
     editorRef.current?.focus();
@@ -214,6 +264,10 @@ export default function DocumentPane({ docId }: { docId: string }) {
       pre.appendChild(code);
       container.replaceWith(pre);
     }
+    // 상태 반영
+    isFromEditorRef.current = true;
+    setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+    editorRef.current?.focus();
   }, []);
 
   /* 링크/체크박스/이미지 */
@@ -308,24 +362,24 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* 키 핸들링 */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      // 저장
+      if (isCmdOrCtrl(e) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         void saveNow();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        exec("bold");
+      // 서식
+      if (isCmdOrCtrl(e) && e.key.toLowerCase() === "b") {
+        e.preventDefault(); exec("bold");
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
-        e.preventDefault();
-        exec("italic");
+      if (isCmdOrCtrl(e) && e.key.toLowerCase() === "i") {
+        e.preventDefault(); exec("italic");
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "u") {
-        e.preventDefault();
-        exec("underline");
+      if (isCmdOrCtrl(e) && e.key.toLowerCase() === "u") {
+        e.preventDefault(); exec("underline");
       }
 
+      // 슬래시 메뉴 트리거(라인 시작에서 /)
       if (e.key === "/" && isCaretAtLineStart()) {
         setSlashOpen(true);
         return;
@@ -335,6 +389,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
         return;
       }
 
+      // 마크다운풍 단축(# + Space 등)
       if (e.key === " ") {
         const sel = window.getSelection();
         if (!sel || sel.rangeCount === 0) return;
@@ -406,6 +461,26 @@ export default function DocumentPane({ docId }: { docId: string }) {
     isFromEditorRef.current = true;
     const html = getEditorHtml(editorRef);
     setBlocks([{ type: "doc", html }]);
+  }, []);
+
+  /* ✅ 붙여넣기 sanitize: 인라인 스타일/스팬 등 제거 */
+  const handleEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    if (html) {
+      e.preventDefault();
+      const clean = sanitizeHtml(html);
+      insertHtmlAtCaret(clean, editorRef);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+    } else if (text) {
+      // 순수 텍스트는 안전 변환
+      e.preventDefault();
+      const safe = safeHtml(text).replace(/\n/g, "<br>");
+      insertHtmlAtCaret(safe, editorRef);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+    }
   }, []);
 
   /* 체크박스 토글 처리 */
@@ -613,12 +688,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
                          [&_p]:my-2 [&_h1]:text-3xl [&_h2]:text-2xl
                          [&_blockquote]:border-l-2 [&_blockquote]:border-gray-200 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600
                          [&_pre]:bg-gray-50 [&_pre]:p-3 [&_pre]:rounded-lg
-                         [&_.todo]:list-none [&_.todo_li]:m-0"
+                         [&_.todo]:list-none [&_.todo>li]:m-0"
               contentEditable
               suppressContentEditableWarning
               onInput={handleEditorInput}
               onKeyDown={handleKeyDown}
               onClick={handleEditorClick}
+              onPaste={handleEditorPaste}
               aria-label="문서 에디터"
               data-placeholder="여기에 내용을 입력하세요…"
             />
@@ -646,7 +722,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
         createPortal(
           <div
             className="fixed z-[9999]"
-            style={{ left: `${bannerCenterX}px`, transform: "translateX(-50%)", bottom: "96px" }}
+            style={{ left: `${bannerCenterX}px`, transform: "translateX(-50%)", bottom: "112px" }} /* ⬆ 기존보다 16px 위 */
           >
             <button
               onClick={() => {
@@ -730,7 +806,6 @@ function toDocHtml(blocks: Block[]) {
   return blockHtml(blocks);
 }
 function escapeHtml(str: string) {
-  // ✅ 오타 Fix: "&lt;/g," 잘못된 부분 수정
   return (str || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

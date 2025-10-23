@@ -1,10 +1,11 @@
-﻿import Image from "next/image";
+﻿// components/SidebarTree.tsx
+import Image from "next/image";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import SidebarOnboardingCard from "@/components/SidebarOnboardingCard"; // ✅ 클라이언트 배너 섬
+import SidebarOnboardingCard from "@/components/SidebarOnboardingCard"; // ✅ 클라이언트 섬
 
 type FolderSummary = { id: string; name: string; parentId: string | null };
 type Props = { roots: { id: string; name: string }[]; activeFolderId: string | null };
@@ -14,12 +15,11 @@ const DOCUMENT_FEATURES = ["이력서", "자기소개서", "포트폴리오", "�
 const INTERVIEW_FEATURES = ["모의면접", "면접오답노트"];
 const CAREER_FEATURES = ["프로젝트 정리", "연봉 계산기"];
 const BASE_INDENT = 16;
-const CHILD_INDENT_STEP = 14; // (더는 쓰지 않지만 남겨둠)
 
-/** 사이드바 기능 링크 매핑: 여기서만 추가/관리하면 됨 */
+/** 사이드바 기능 링크 매핑 */
 const FEATURE_LINKS: Record<string, string> = {
   "연봉 계산기": "/tools/salary",
-  // 필요 시 "프로젝트 정리": "/tools/projects" 등으로 확장
+  // "프로젝트 정리": "/tools/projects" 등 필요 시 확장
 };
 
 function toAppUrl(params: { folderId?: string | null; docId?: string | null }) {
@@ -42,7 +42,7 @@ function getInitialAndColor(name?: string | null, email?: string | null) {
 /** 간단 온도 게이지 */
 function ThermoGauge({ celsius = 36.5 }: { celsius?: number }) {
   const min = 34, max = 40;
-  const pct = Math.max(0, Math.min(100, ((celsius - min) / (max - max + 6)) * 100)); // keep same scale
+  const pct = Math.max(0, Math.min(100, ((celsius - min) / (max - min)) * 100));
   return (
     <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
       <div className="h-full bg-gradient-to-r from-rose-400 via-amber-400 to-lime-400" style={{ width: `${pct}%` }} />
@@ -50,11 +50,22 @@ function ThermoGauge({ celsius = 36.5 }: { celsius?: number }) {
   );
 }
 
+/** 문서 루트는 DOCUMENT_FEATURES 순서로 정렬 */
+function sortByPreset<T extends { name: string }>(items: T[], preset: string[]) {
+  const order = new Map(preset.map((v, i) => [v, i]));
+  return [...items].sort((a, b) => {
+    const ai = order.has(a.name) ? order.get(a.name)! : Number.MAX_SAFE_INTEGER;
+    const bi = order.has(b.name) ? order.get(b.name)! : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return a.name.localeCompare(b.name, "ko");
+  });
+}
+
 export default async function SidebarTree({ roots, activeFolderId }: Props) {
   const session = await getServerSession(authOptions);
   const userId = session?.user?.id ?? null;
 
-  // 상단 로고 (상/하 여백 줄임: py-4 → py-2.5)
+  // 상단 로고 (상/하 여백 줄임)
   const Logo = () => (
     <div className="py-2.5 pl-4 pr-3 border-b border-gray-100">
       <Link href={userId ? "/app" : "/"} className="block">
@@ -84,7 +95,7 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
     );
   }
 
-  // 폴더 목록
+  // 폴더 목록: 현재는 상위 폴더만 사이드바에 표시(하위폴더 렌더 X)
   const all = await prisma.folder.findMany({
     where: { createdById: userId },
     orderBy: { createdAt: "asc" },
@@ -96,8 +107,14 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
   const existingNames = new Set(all.map((f) => f.name));
   const documentFeatures = DOCUMENT_FEATURES.filter((x) => !existingNames.has(x));
-  const docRoots = roots.filter((r) => DOCUMENT_FEATURES.includes(r.name));
-  const otherRoots = roots.filter((r) => !DOCUMENT_FEATURES.includes(r.name));
+
+  const docRootsRaw = roots.filter((r) => DOCUMENT_FEATURES.includes(r.name));
+  const docRoots = sortByPreset(docRootsRaw, DOCUMENT_FEATURES);
+
+  const otherRoots = roots.filter((r) => !DOCUMENT_FEATURES.includes(r.name)).sort((a, b) =>
+    a.name.localeCompare(b.name, "ko")
+  );
+
   const hasDocumentGroup = docRoots.length > 0 || documentFeatures.length > 0;
 
   return (
@@ -122,15 +139,26 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
                   {docRoots.map((root) => (
                     <FolderNode key={root.id} node={root} activeFolderId={activeFolderId} />
                   ))}
-                  {documentFeatures.map((item) => <DocumentFeaturePlaceholder key={item} label={item} />)}
+                  {documentFeatures.map((item) => (
+                    <DocumentFeaturePlaceholder key={item} label={item} />
+                  ))}
                 </div>
               </div>
             )}
-            {otherRoots.map((root) => (
-              <FolderNode key={root.id} node={root} activeFolderId={activeFolderId} />
-            ))}
+
+            {otherRoots.length > 0 && (
+              <div className="space-y-2">
+                <p className="pl-4 pr-2 text-xs font-semibold uppercase tracking-wide text-gray-500">폴더</p>
+                <div className="space-y-1">
+                  {otherRoots.map((root) => (
+                    <FolderNode key={root.id} node={root} activeFolderId={activeFolderId} />
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
+
         <div className="border-t border-gray-200 pt-4">
           <FeatureSection title="면접대비" items={INTERVIEW_FEATURES} />
         </div>
@@ -147,7 +175,10 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
               {avatar ? (
                 <Image src={avatar} alt="user" fill className="object-cover" />
               ) : (
-                <span className="flex h-full w-full items-center justify-center text-xs font-semibold text-white" style={{ backgroundColor: color }}>
+                <span
+                  className="flex h-full w-full items-center justify-center text-xs font-semibold text-white"
+                  style={{ backgroundColor: color }}
+                >
                   {initial}
                 </span>
               )}
@@ -156,7 +187,9 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
               <p className="text-sm font-medium truncate">{session?.user?.name ?? "사용자"}</p>
               <p className="text-xs text-gray-500 truncate">{session?.user?.email}</p>
             </div>
-            <Link href="/settings" className="ml-auto shrink-0 text-xs text-gray-500 hover:text-gray-700">프로필</Link>
+            <Link href="/settings" className="ml-auto shrink-0 text-xs text-gray-500 hover:text-gray-700">
+              프로필
+            </Link>
           </div>
 
           <div className="mt-4">
@@ -205,15 +238,18 @@ type NodeProps = {
 function FolderNode({ node, activeFolderId }: NodeProps) {
   const isActive = activeFolderId === node.id;
   const depthFont = "text-[15px] font-semibold";
-  const active = isActive ? "bg-[#E0E7FF] text-[#1D4ED8]" : "hover:bg-gray-100 hover:text-[#1D4ED8]";
-  const paddingLeft = BASE_INDENT;
+  const base = "block rounded py-2 pr-2 transition";
+  const inactive = "text-gray-800 hover:bg-gray-100 hover:text-[#1D4ED8]";
+  const active = "bg-[#E0E7FF] text-[#1D4ED8]";
 
   return (
     <div>
       <Link
         href={toAppUrl({ folderId: node.id })}
-        className={`block rounded py-2 pr-2 ${depthFont} transition text-gray-800 ${active}`}
-        style={{ paddingLeft }}
+        className={`${base} ${depthFont} ${isActive ? active : inactive}`}
+        style={{ paddingLeft: BASE_INDENT }}
+        aria-current={isActive ? "page" : undefined}
+        title={node.name}
       >
         {node.name}
       </Link>
@@ -229,25 +265,18 @@ function FeatureSection({ title, items }: { title: string; items: string[] }) {
       <ul className="space-y-1">
         {items.map((item) => {
           const href = FEATURE_LINKS[item];
-          const baseCls =
-            "rounded py-2 pr-2 pl-4 text-[15px] font-semibold transition";
+          const baseCls = "rounded py-2 pr-2 pl-4 text-[15px] font-semibold transition";
           if (href) {
             return (
               <li key={item}>
-                <Link
-                  href={href}
-                  className={`${baseCls} text-gray-800 hover:bg-gray-100 hover:text-[#1D4ED8]`}
-                >
+                <Link href={href} className={`${baseCls} text-gray-800 hover:bg-gray-100 hover:text-[#1D4ED8]`}>
                   {item}
                 </Link>
               </li>
             );
           }
           return (
-            <li
-              key={item}
-              className={`${baseCls} text-gray-400`}
-            >
+            <li key={item} className={`${baseCls} text-gray-400`}>
               {item}
             </li>
           );
