@@ -1,607 +1,205 @@
 ﻿"use client";
 
 import type React from "react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import type { LucideIcon } from "lucide-react";
-import {
-  Briefcase,
-  FileSignature,
-  LayoutTemplate,
-  HelpCircle,
-  Palette,
-  FileStack,
-} from "lucide-react";
+import { useEffect, useState, useCallback, useRef, useMemo, useTransition } from "react";
+import dynamic from "next/dynamic";
+import { createPortal } from "react-dom";
+import { renameDocument, saveDocumentJson } from "@/app/actions/folderActions";
+/* ✅ 추가: 서버액션 직접 호출 */
+import { regenerateDocument } from "@/app/actions/regenerateActions";
 
-import {
-  renameDocument,
-  saveDocumentJson,
-} from "@/app/actions/folderActions";
+/* ---------- A4 미리보기: 모달 열 때만 동적 로드 ---------- */
+const A4Preview = dynamic(() => import("@/components/A4Preview"), { ssr: false, loading: () => null });
 
-type Block =
-  | { type: "doc"; html: string }
-  | { type: string; text?: string; html?: string };
-
-type FolderTypeValue = "ROOT_RESUME" | "ROOT_COVERLETTER" | "ROOT_PORTFOLIO" | "CUSTOM";
-
-type Doc = {
-  id: string;
-  title: string;
-  content: { blocks: Block[] } | null;
-  templateKey?: string | null;
-  folderType?: FolderTypeValue | null;
-};
-
+/* ---------- 타입 ---------- */
+type Block = { type: "doc"; html: string } | { type: string; text?: string; html?: string };
+type Doc = { id: string; title: string; content: { blocks: Block[] } | null };
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-type TemplateCategory = "Resume" | "Cover Letter" | "Portfolio";
-
-type TemplateOption = {
-  key: string;
-  label: string;
-  description: string;
-  icon: LucideIcon;
-  html: string;
-};
-
-type TemplateGroup = {
-  category: TemplateCategory;
-  icon: LucideIcon;
-  toneClass: string;
-  templates: TemplateOption[];
-};
-
-const TEMPLATE_GROUPS: TemplateGroup[] = [
-  {
-    category: "Resume",
-    icon: Briefcase,
-    toneClass: "bg-sky-100 text-sky-700",
-    templates: [
-      {
-        key: "resume_profile_focus",
-        label: "프로필 스냅샷",
-        description: "상단 요약과 카드형 경력 블록",
-        icon: LayoutTemplate,
-        html: `
-          <section style="font-family:Noto Sans KR, sans-serif; color:#1F2937;">
-            <header style="border-bottom:1px solid #E5E7EB; padding-bottom:20px; margin-bottom:24px;">
-              <h1 style="font-size:32px; font-weight:700; margin:0;">{{full_name}}</h1>
-              <p style="margin:8px 0 0; font-size:14px; color:#4B5563;">
-                {{role}} · {{phone}} · {{email}} · {{location}}
-              </p>
-            </header>
-            <section style="margin-bottom:28px;">
-              <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">간단 소개</h2>
-              <p style="line-height:1.6; font-size:14px;">{{summary}}</p>
-            </section>
-            <section>
-              <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">주요 경력</h2>
-              <article style="border:1px solid #E5E7EB; border-radius:16px; padding:16px; margin-bottom:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                  <div>
-                    <h3 style="margin:0; font-size:15px; font-weight:600;">{{experience1_company}}</h3>
-                    <p style="margin:4px 0 0; font-size:13px; color:#4B5563;">
-                      {{experience1_role}} · {{experience1_type}} · {{experience1_location}}
-                    </p>
-                  </div>
-                  <span style="font-size:12px; color:#6B7280;">{{experience1_period}}</span>
-                </div>
-                <ul style="margin:12px 0 0; padding-left:20px; font-size:13px; line-height:1.6;">
-                  <li>{{experience1_highlight1}}</li>
-                  <li>{{experience1_highlight2}}</li>
-                  <li>{{experience1_highlight3}}</li>
-                </ul>
-              </article>
-              <article style="border:1px solid #E5E7EB; border-radius:16px; padding:16px;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                  <div>
-                    <h3 style="margin:0; font-size:15px; font-weight:600;">{{experience2_company}}</h3>
-                    <p style="margin:4px 0 0; font-size:13px; color:#4B5563;">
-                      {{experience2_role}} · {{experience2_type}} · {{experience2_location}}
-                    </p>
-                  </div>
-                  <span style="font-size:12px; color:#6B7280;">{{experience2_period}}</span>
-                </div>
-                <ul style="margin:12px 0 0; padding-left:20px; font-size:13px; line-height:1.6;">
-                  <li>{{experience2_highlight1}}</li>
-                  <li>{{experience2_highlight2}}</li>
-                  <li>{{experience2_highlight3}}</li>
-                </ul>
-              </article>
-            </section>
-            <section style="margin-top:28px; display:grid; gap:16px;">
-              <div>
-                <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">학력</h2>
-                <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
-              </div>
-              <div>
-                <h2 style="font-size:16px; font-weight:600; color:#1D4ED8; margin-bottom:8px;">보유 역량</h2>
-                <p style="margin:0; font-size:13px; line-height:1.6;">{{skills}}</p>
-              </div>
-            </section>
-          </section>
-        `.trim(),
-      },
-      {
-        key: "resume_elegant_lines",
-        label: "엘레강스 라인",
-        description: "흑백 라인과 표 정렬형 구조",
-        icon: LayoutTemplate,
-        html: `
-          <section style="font-family:Pretendard, sans-serif; color:#111827;">
-            <header style="text-align:center; padding:24px 0; border-bottom:2px solid #1F2937; margin-bottom:24px;">
-              <h1 style="margin:0; font-size:30px; letter-spacing:2px;">{{full_name}}</h1>
-              <p style="margin:8px 0 0; font-size:13px; letter-spacing:1px; text-transform:uppercase;">{{role}}</p>
-              <p style="margin:4px 0 0; font-size:12px; color:#4B5563;">{{email}} · {{phone}} · {{website}}</p>
-            </header>
-            <section style="margin-bottom:24px;">
-              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">학력사항</h2>
-              <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:12px;">
-                <tbody>
-                  <tr>
-                    <td style="padding:6px 0; width:30%;">{{education1_period}}</td>
-                    <td style="padding:6px 0; width:35%; font-weight:600;">{{education1_school}}</td>
-                    <td style="padding:6px 0;">{{education1_major}}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:6px 0;">{{education2_period}}</td>
-                    <td style="padding:6px 0; font-weight:600;">{{education2_school}}</td>
-                    <td style="padding:6px 0;">{{education2_major}}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </section>
-            <section style="margin-bottom:24px;">
-              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">경력사항</h2>
-              <div style="margin-top:12px; font-size:13px;">
-                <p style="margin:0; font-weight:600;">{{experience1_company}} | {{experience1_role}}</p>
-                <p style="margin:4px 0 8px; color:#4B5563;">{{experience1_period}} · {{experience1_location}}</p>
-                <ul style="margin:0 0 12px 18px; line-height:1.6;">
-                  <li>{{experience1_detail1}}</li>
-                  <li>{{experience1_detail2}}</li>
-                </ul>
-                <p style="margin:0; font-weight:600;">{{experience2_company}} | {{experience2_role}}</p>
-                <p style="margin:4px 0 8px; color:#4B5563;">{{experience2_period}} · {{experience2_location}}</p>
-                <ul style="margin:0 0 12px 18px; line-height:1.6;">
-                  <li>{{experience2_detail1}}</li>
-                  <li>{{experience2_detail2}}</li>
-                </ul>
-              </div>
-            </section>
-            <section>
-              <h2 style="font-size:15px; font-weight:600; border-bottom:1px solid #1F2937; padding-bottom:6px;">자격증 · 수상</h2>
-              <p style="margin:12px 0 0; font-size:13px; line-height:1.6;">{{certificates}}</p>
-            </section>
-          </section>
-        `.trim(),
-      },
-      {
-        key: "resume_dark_header",
-        label: "다크 헤더",
-        description: "상단 블록과 좌우 분할 구성",
-        icon: LayoutTemplate,
-        html: `
-          <section style="font-family:Noto Sans KR, sans-serif; color:#111827;">
-            <div style="background:#1F2937; color:#F9FAFB; padding:28px; border-radius:16px 16px 0 0;">
-              <h1 style="margin:0; font-size:30px;">{{full_name}}</h1>
-              <p style="margin:6px 0 0; font-size:13px;">{{role}} · {{phone}} · {{email}}</p>
-              <p style="margin:2px 0 0; font-size:12px; color:#D1D5DB;">{{address}}</p>
-            </div>
-            <div style="display:flex; gap:24px; border:1px solid #E5E7EB; border-top:none; border-radius:0 0 16px 16px; padding:24px;">
-              <aside style="width:32%; border-right:1px solid #E5E7EB; padding-right:20px;">
-                <section style="margin-bottom:24px;">
-                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">핵심 정보</h2>
-                  <p style="margin:0; font-size:13px; line-height:1.6;">{{summary}}</p>
-                </section>
-                <section style="margin-bottom:24px;">
-                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">기술 & 스킬</h2>
-                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
-                    <li>{{skill1}}</li>
-                    <li>{{skill2}}</li>
-                    <li>{{skill3}}</li>
-                    <li>{{skill4}}</li>
-                  </ul>
-                </section>
-                <section>
-                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:10px;">학력</h2>
-                  <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
-                </section>
-              </aside>
-              <main style="flex:1;">
-                <section style="margin-bottom:24px;">
-                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">경력 요약</h2>
-                  <div style="border-left:3px solid #1D4ED8; padding-left:16px;">
-                    <h3 style="margin:0; font-size:15px;">{{experience1_company}}</h3>
-                    <p style="margin:4px 0; font-size:13px; color:#4B5563;">{{experience1_role}} · {{experience1_period}}</p>
-                    <p style="margin:0 0 12px; font-size:13px; line-height:1.6;">{{experience1_summary}}</p>
-                    <h3 style="margin:0; font-size:15px;">{{experience2_company}}</h3>
-                    <p style="margin:4px 0; font-size:13px; color:#4B5563;">{{experience2_role}} · {{experience2_period}}</p>
-                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience2_summary}}</p>
-                  </div>
-                </section>
-                <section>
-                  <h2 style="font-size:14px; font-weight:600; color:#1D4ED8; margin-bottom:12px;">프로젝트 & 성과</h2>
-                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
-                    <li>{{project1}}</li>
-                    <li>{{project2}}</li>
-                    <li>{{project3}}</li>
-                  </ul>
-                </section>
-              </main>
-            </div>
-          </section>
-        `.trim(),
-      },
-      {
-        key: "resume_split_columns",
-        label: "투 콜럼 미니멀",
-        description: "양옆 정보 분할 + 프로필 영역",
-        icon: LayoutTemplate,
-        html: `
-          <section style="font-family:Pretendard, sans-serif; color:#1F2937; border:1px solid #E5E7EB; border-radius:18px; overflow:hidden;">
-            <header style="display:flex; align-items:center; gap:24px; background:#F9FAFB; padding:24px;">
-              <div style="width:92px; height:92px; border-radius:50%; background:#E5E7EB; display:flex; align-items:center; justify-content:center;">
-                <span style="font-size:32px; font-weight:700; color:#9CA3AF;">{{initials}}</span>
-              </div>
-              <div>
-                <h1 style="margin:0; font-size:28px;">{{full_name}}</h1>
-                <p style="margin:4px 0 0; font-size:14px; color:#4B5563;">{{role}}</p>
-                <p style="margin:2px 0 0; font-size:12px; color:#6B7280;">{{email}} · {{phone}} · {{linkedin}}</p>
-              </div>
-            </header>
-            <div style="display:flex;">
-              <aside style="width:34%; border-right:1px solid #E5E7EB; padding:24px;">
-                <section style="margin-bottom:20px;">
-                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">ABOUT</h2>
-                  <p style="margin:0; font-size:13px; line-height:1.6;">{{summary}}</p>
-                </section>
-                <section style="margin-bottom:20px;">
-                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">SKILLS</h2>
-                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
-                    <li>{{skill1}}</li>
-                    <li>{{skill2}}</li>
-                    <li>{{skill3}}</li>
-                    <li>{{skill4}}</li>
-                  </ul>
-                </section>
-                <section>
-                  <h2 style="font-size:13px; font-weight:700; letter-spacing:1px; color:#1D4ED8; margin-bottom:10px;">LANGUAGES</h2>
-                  <p style="margin:0; font-size:13px; line-height:1.6;">{{languages}}</p>
-                </section>
-              </aside>
-              <main style="flex:1; padding:24px;">
-                <section style="margin-bottom:20px;">
-                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Career Experience</h2>
-                  <div style="margin-bottom:16px;">
-                    <h3 style="margin:0; font-size:14px;">{{experience1_role}} @ {{experience1_company}}</h3>
-                    <p style="margin:4px 0; font-size:12px; color:#6B7280;">{{experience1_period}} · {{experience1_location}}</p>
-                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience1_summary}}</p>
-                  </div>
-                  <div>
-                    <h3 style="margin:0; font-size:14px;">{{experience2_role}} @ {{experience2_company}}</h3>
-                    <p style="margin:4px 0; font-size:12px; color:#6B7280;">{{experience2_period}} · {{experience2_location}}</p>
-                    <p style="margin:0; font-size:13px; line-height:1.6;">{{experience2_summary}}</p>
-                  </div>
-                </section>
-                <section style="margin-bottom:20px;">
-                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Education</h2>
-                  <p style="margin:0; font-size:13px; line-height:1.6;">{{education}}</p>
-                </section>
-                <section>
-                  <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">Projects & Awards</h2>
-                  <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6;">
-                    <li>{{achievement1}}</li>
-                    <li>{{achievement2}}</li>
-                    <li>{{achievement3}}</li>
-                  </ul>
-                </section>
-              </main>
-            </div>
-          </section>
-        `.trim(),
-      },
-
-    ],
-  },
-  {
-    category: "Cover Letter",
-    icon: FileSignature,
-    toneClass: "bg-rose-100 text-rose-700",
-    templates: [
-      {
-        key: "cover_story",
-        label: "Narrative Cover Letter",
-        description: "STAR style story.",
-        icon: FileSignature,
-        html: `
-          <section>
-            <p>Dear 김채용 매니저님,</p>
-            <p>안녕하세요. 스펙클라우드 Product Manager 포지션에 지원하는 조동현입니다. 고객 문제를 해결하는 실험을 즐기는 사람으로서 귀사의 AI 전략에 기여하고 싶습니다.</p>
-          </section>
-          <section>
-            <h2>STAR Story</h2>
-            <p><strong>Situation</strong> 주요 고객들이 온보딩 과정에서 이탈하는 문제가 있었습니다.</p>
-            <p><strong>Task</strong> 30일 내 전환율을 10% 이상 끌어올리는 목표를 맡았습니다.</p>
-            <p><strong>Action</strong> 사용자 인터뷰와 퍼널 분석을 통해 장애 요소를 확인하고, 맞춤형 튜토리얼과 자동 알림을 도입했습니다.</p>
-            <p><strong>Result</strong> 도입 후 6주 만에 전환율이 13%p 상승하고 NPS가 9점 향상되었습니다.</p>
-          </section>
-          <section>
-            <h2>Closing</h2>
-            <p>이 경험을 바탕으로 스펙클라우드의 AI 문서 자동화 제품도 빠르게 성장시키겠습니다. 기회가 된다면 직접 이야기 나누고 싶습니다.</p>
-          </section>
-        `.trim(),
-      },
-      {
-        key: "cover_qna",
-        label: "Q&A Cover Letter",
-        description: "Answer common prompts.",
-        icon: HelpCircle,
-        html: `
-          <section>
-            <h2>1. Motivation</h2>
-            <p>스펙클라우드는 생성형 AI와 문서 자동화의 결합으로 B2B 시장에서 독보적 기회를 만들고 있다고 믿습니다. 고객의 일을 더 쉽게 만들겠다는 미션에 깊이 공감합니다.</p>
-          </section>
-          <section>
-            <h2>2. Strength</h2>
-            <p>데이터 기반 실험 설계와 크로스 펑셔널 협업이 강점입니다. 제품, 디자인, 세일즈를 조율하며 의사결정을 빠르게 이끌었습니다.</p>
-          </section>
-          <section>
-            <h2>3. Collaboration</h2>
-            <p>최근 AI 추천 모델 고도화 프로젝트에서 엔지니어 4명, 디자이너 1명과 함께 8주간 스프린트를 운영했습니다. 매주 고객 피드백을 반영하며 로드맵을 조정했습니다.</p>
-          </section>
-          <section>
-            <h2>4. Plan</h2>
-            <p>입사 후 첫 분기에는 핵심 퍼널 데이터 계측을 정비하고, 상위 고객군을 위한 맞춤 템플릿을 도입해 활성도를 끌어올릴 계획입니다.</p>
-          </section>
-        `.trim(),
-      },
-    ],
-  },
-  {
-    category: "Portfolio",
-    icon: Palette,
-    toneClass: "bg-indigo-100 text-indigo-700",
-    templates: [
-      {
-        key: "portfolio_design",
-        label: "Design Case Study",
-        description: "Problem, process, outcome.",
-        icon: Palette,
-        html: `
-          <section>
-            <h2>Overview</h2>
-            <p>스펙클라우드 온보딩 경험을 재설계하여 새 고객의 첫 주차 활성 지표를 개선한 프로젝트입니다.</p>
-          </section>
-          <section>
-            <h2>Process</h2>
-            <ul>
-              <li>정성 인터뷰 20회와 행동 데이터 분석으로 문제 정의.</li>
-              <li>핵심 시나리오를 스토리보드로 시각화하고 저충실도 프로토타입을 반복 검증.</li>
-              <li>디자인 시스템을 정리하고 개발 협업을 통해 단계별 출시.</li>
-            </ul>
-          </section>
-          <section>
-            <h2>Outcome</h2>
-            <p>출시 4주 후 온보딩 완료율이 45%에서 68%로 상승하고, 지원 요청 티켓이 30% 감소했습니다.</p>
-          </section>
-        `.trim(),
-      },
-      {
-        key: "portfolio_dev",
-        label: "Engineering Portfolio",
-        description: "Focus on stack and impact.",
-        icon: LayoutTemplate,
-        html: `
-          <section>
-            <h2>Introduction</h2>
-            <p>안녕하세요, 조동현입니다. 클라우드 문서 자동화와 데이터 파이프라인을 설계하는 제품 개발자입니다.</p>
-          </section>
-          <section>
-            <h2>Highlighted Project</h2>
-            <p>스펙클라우드 문서 생성 엔진을 설계하며 Next.js, Prisma, Vertex AI를 활용해 템플릿 기반 생성 시간을 70% 단축했습니다.</p>
-          </section>
-          <section>
-            <h2>Technical Stack</h2>
-            <p>TypeScript, Next.js, React Query, Prisma, PostgreSQL, AWS Lambda, Vertex AI, GitHub Actions 등 협업 환경에 익숙합니다.</p>
-          </section>
-        `.trim(),
-      },
-    ],
-  },
-];
-
-const FOLDER_CATEGORY_MAP: Record<FolderTypeValue, TemplateCategory | null> = {
-  ROOT_RESUME: "Resume",
-  ROOT_COVERLETTER: "Cover Letter",
-  ROOT_PORTFOLIO: "Portfolio",
-  CUSTOM: null,
-};
-
-const TEMPLATE_MAP: Record<string, TemplateOption> = TEMPLATE_GROUPS.reduce(
-  (acc, group) => {
-    group.templates.forEach((tpl) => {
-      acc[tpl.key] = tpl;
-    });
-    return acc;
-  },
-  {} as Record<string, TemplateOption>,
-);
-
+/* ---------- 컴포넌트 ---------- */
 export default function DocumentPane({ docId }: { docId: string }) {
+  /* 상태 */
   const [doc, setDoc] = useState<Doc | null>(null);
   const [title, setTitle] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
+  /* 자동저장 상태 */
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [saveMsg, setSaveMsg] = useState("");
+  const [saveMsg, setSaveMsg] = useState<string>("");
 
+  /* ✅ 추가: 재생성 진행상태/메시지 */
+  const [regenMsg, setRegenMsg] = useState<string>("");
+  const [isPending, startTransition] = useTransition();
+
+  /* 에디터/파일 */
   const editorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const skipEditorSyncRef = useRef(false);
 
-  const fieldsRef = useRef<Record<string, string>>({});
-  const lastSavedHtmlRef = useRef("");
-  const lastSavedTitleRef = useRef("");
+  /* 내부 상태 */
+  const isFromEditorRef = useRef(false);
+  const lastSavedHtmlRef = useRef<string>("");
+  const lastSavedTitleRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [templateSearch, setTemplateSearch] = useState("");
-  const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
+  /* 슬래시 메뉴 */
+  const [slashOpen, setSlashOpen] = useState(false);
 
+  /* 미리보기 모달 */
+  const [previewOpen, setPreviewOpen] = useState(false);
   const currentHtml = useMemo(() => blockHtml(blocks), [blocks]);
-  const placeholderKeys = useMemo(() => extractTemplateKeys(currentHtml), [currentHtml]);
-  const activeCategory = useMemo(() => {
-    if (!doc?.folderType) return null;
-    return FOLDER_CATEGORY_MAP[doc.folderType] ?? null;
-  }, [doc?.folderType]);
-  const filteredGroups = useMemo(() => {
-    const term = templateSearch.trim().toLowerCase();
-    const baseGroups = activeCategory
-      ? TEMPLATE_GROUPS.filter((group) => group.category === activeCategory)
-      : TEMPLATE_GROUPS;
-    if (!term) return baseGroups;
-    return baseGroups
-      .map((group) => ({
-        ...group,
-        templates: group.templates.filter((tpl) => {
-          const haystack = `${tpl.label} ${tpl.description} ${tpl.key}`.toLowerCase();
-          return haystack.includes(term);
-        }),
-      }))
-      .filter((group) => group.templates.length > 0);
-  }, [templateSearch, activeCategory]);
+  const [previewHtmlSnap, setPreviewHtmlSnap] = useState<string>("");
 
+  /* 배너를 문서작성 영역 기준으로 중앙 정렬하기 위한 ref/좌표 */
+  const writerPaneRef = useRef<HTMLDivElement | null>(null);
+  const [bannerCenterX, setBannerCenterX] = useState<number | null>(null);
   useEffect(() => {
-    fieldsRef.current = fields;
-  }, [fields]);
+    const reposition = () => {
+      const r = writerPaneRef.current?.getBoundingClientRect();
+      if (!r) return;
+      setBannerCenterX(Math.round(r.left + r.width / 2));
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, []);
 
+  /* Portal 렌더 준비 */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  /* 문서 로드 */
   useEffect(() => {
     let alive = true;
-    async function loadDocument() {
+    async function load() {
       if (!docId) {
-        setError("문서 ID가 없습니다.");
+        setErr("문서 ID가 없습니다.");
         setLoading(false);
         return;
       }
       setLoading(true);
-      setError(null);
+      setErr(null);
       try {
         const res = await fetch(`/api/documents?id=${encodeURIComponent(docId)}`, { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error(`문서를 불러오지 못했습니다. (HTTP ${res.status})`);
-        }
+        if (!res.ok) throw new Error(`문서를 불러오지 못했습니다. (HTTP ${res.status})`);
         const data: Doc = await res.json();
         if (!alive) return;
+
         setDoc(data);
-        setTitle(data?.title ?? "");
-        const rawBlocks = data?.content?.blocks ?? [];
-        const html = toDocHtml(rawBlocks);
-        lastSavedHtmlRef.current = html;
-        lastSavedTitleRef.current = data?.title ?? "";
-        setBlocks([{ type: "doc", html }]);
-        const nextFields: Record<string, string> = {};
-        extractTemplateKeys(html).forEach((key) => {
-          nextFields[key] = fieldsRef.current[key] ?? "";
-        });
-        fieldsRef.current = nextFields;
-        setFields(nextFields);
-        setActiveTemplate(data?.templateKey ?? null);
-      } catch (err) {
+        setTitle(data?.title || "");
+
+        const rawBlocks = data?.content?.blocks || [];
+        const docHtml = toDocHtml(rawBlocks);
+        setBlocks([{ type: "doc", html: docHtml }]);
+
+        lastSavedHtmlRef.current = docHtml;
+        lastSavedTitleRef.current = data?.title || "";
+      } catch (e: any) {
         if (!alive) return;
-        const message = err instanceof Error ? err.message : "문서를 불러오는 중 오류가 발생했습니다.";
-        setError(message);
+        setErr(e?.message ?? "문서를 불러오는 중 오류가 발생했습니다.");
       } finally {
         if (alive) setLoading(false);
       }
     }
-    loadDocument();
+    load();
     return () => {
       alive = false;
     };
   }, [docId]);
 
-  useEffect(() => {
-    if (placeholderKeys.length === 0) {
-      if (Object.keys(fieldsRef.current).length > 0) {
-        fieldsRef.current = {};
-        setFields({});
-      }
-      return;
-    }
-    setFields((prev) => {
-      const next: Record<string, string> = {};
-      placeholderKeys.forEach((key) => {
-        next[key] = prev[key] ?? "";
+  /* 템플릿 변수 치환 */
+  const handleChangeField = useCallback(
+    (key: string, val: string) => {
+      const newFields = { ...fields, [key]: val };
+      setFields(newFields);
+
+      const html = getEditorHtml(editorRef) || blockHtml(blocks);
+      const nextHtml = html.replace(/{{(.*?)}}/g, (match, p1) => {
+        const k = String(p1).trim();
+        const repl = newFields[k];
+        return repl !== undefined && repl !== "" ? safeHtml(repl) : match;
       });
-      fieldsRef.current = next;
-      return next;
-    });
-  }, [placeholderKeys]);
 
-  useEffect(() => {
-    if (skipEditorSyncRef.current) {
-      skipEditorSyncRef.current = false;
-      return;
-    }
-    const html = currentHtml;
-    setEditorHtml(editorRef, html);
-  }, [currentHtml]);
+      setBlocks([{ type: "doc", html: nextHtml }]);
+      setEditorHtml(editorRef, nextHtml);
+    },
+    [fields, blocks]
+  );
 
-  useEffect(() => () => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-  }, []);
-
+  /* execCommand */
   const exec = useCallback((cmd: string, value?: string) => {
     document.execCommand(cmd, false, value);
     editorRef.current?.focus();
   }, []);
+
+  /* 코드블록 토글 */
+  const toggleCodeBlock = useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const container = closestBlock(range.startContainer as HTMLElement);
+    if (!container) return;
+
+    if (container.tagName === "PRE") {
+      const code = container.querySelector("code");
+      const text = (code ? code.textContent : container.textContent) || "";
+      const p = document.createElement("p");
+      p.textContent = text;
+      container.replaceWith(p);
+    } else {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = container.textContent || "";
+      pre.appendChild(code);
+      container.replaceWith(pre);
+    }
+  }, []);
+
+  /* 링크/체크박스/이미지 삽입 */
+  const insertLink = useCallback(() => {
+    const url = prompt("링크 URL을 입력하세요 (예: https://example.com)");
+    if (!url) return;
+    exec("createLink", url);
+  }, [exec]);
 
   const insertTodo = useCallback(() => {
     const html = `
       <ul class="todo my-1">
         <li data-checked="false">
           <input type="checkbox" class="mt-1" />
-          <div class="todo-text">Add a checklist item</div>
+          <div class="todo-text">할 일을 입력하세요</div>
         </li>
-      </ul>
-    `;
+      </ul>`;
     insertHtmlAtCaret(html, editorRef);
-    syncBlocksFromEditor(editorRef, setBlocks);
+    isFromEditorRef.current = true;
+    setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
   }, []);
-
-  const insertLink = useCallback(() => {
-    const url = prompt("Enter link URL (e.g. https://example.com)");
-    if (!url) return;
-    exec("createLink", url);
-  }, [exec]);
 
   const insertImage = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
-
-  const onPickImage = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const onPickImage = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const src = String(reader.result);
-      const html = `<img src="${src}" alt="" class="my-2 max-w-full rounded-md shadow-sm" />`;
+      const html = `<img src="${src}" alt="" class="my-2" />`;
       insertHtmlAtCaret(html, editorRef);
-      syncBlocksFromEditor(editorRef, setBlocks);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
       if (fileInputRef.current) fileInputRef.current.value = "";
     };
     reader.readAsDataURL(file);
   }, []);
 
+  /* 제목 저장 */
   const saveTitle = useCallback(async () => {
     if (!doc) return;
     const next = title.trim() || "제목 없음";
@@ -609,8 +207,9 @@ export default function DocumentPane({ docId }: { docId: string }) {
       await renameDocument(doc.id, next);
       lastSavedTitleRef.current = next;
     }
-  }, [doc, title]);
+  }, [title, doc]);
 
+  /* 즉시 저장 */
   const saveNow = useCallback(async () => {
     if (!doc) return;
     const html = (getEditorHtml(editorRef) || "").trim();
@@ -625,169 +224,317 @@ export default function DocumentPane({ docId }: { docId: string }) {
         lastSavedHtmlRef.current = html;
       }
       if (titleTrim !== lastSavedTitleRef.current) {
-        const nextTitle = titleTrim || "제목 없음";
-        await renameDocument(doc.id, nextTitle);
-        lastSavedTitleRef.current = nextTitle;
+        const next = titleTrim || "제목 없음";
+        await renameDocument(doc.id, next);
+        lastSavedTitleRef.current = next;
       }
       setSaveState("saved");
       setSaveMsg("저장됨");
       setTimeout(() => setSaveState("idle"), 1200);
-    } catch (err) {
-      console.error(err);
+    } catch (e) {
+      console.error(e);
       setSaveState("error");
       setSaveMsg("저장 실패");
     }
   }, [doc, title]);
 
+  /* 자동저장 (800ms) */
   useEffect(() => {
     if (!doc) return;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveState("saving");
     setSaveMsg("저장 대기…");
-    saveTimerRef.current = setTimeout(() => {
-      void saveNow();
-    }, 800);
+    saveTimerRef.current = setTimeout(() => void saveNow(), 800);
     return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [blocks, title, doc, saveNow]);
 
+  /* 단축키 + 마크다운라이크 + /커맨드 */
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void saveNow();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        exec("bold");
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        exec("italic");
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        exec("underline");
+      }
+
+      if (e.key === "/" && isCaretAtLineStart()) {
+        setSlashOpen(true);
+        return;
+      }
+      if (e.key === "Escape" && slashOpen) {
+        setSlashOpen(false);
+        return;
+      }
+
+      if (e.key === " ") {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        const block = closestBlock(range.startContainer as HTMLElement);
+        if (!block) return;
+
+        const text = (block.textContent || "").trim();
+        const atStart = isCaretAtStart(block, sel);
+        if (!atStart) return;
+
+        if (text === "#") {
+          e.preventDefault();
+          block.textContent = "";
+          document.execCommand("formatBlock", false, "h1");
+          return;
+        }
+        if (text === "##") {
+          e.preventDefault();
+          block.textContent = "";
+          document.execCommand("formatBlock", false, "h2");
+          return;
+        }
+        if (text === ">") {
+          e.preventDefault();
+          block.textContent = "";
+          document.execCommand("formatBlock", false, "blockquote");
+          return;
+        }
+        if (text === "-") {
+          e.preventDefault();
+          block.textContent = "";
+          document.execCommand("insertUnorderedList");
+          return;
+        }
+        if (text === "1.") {
+          e.preventDefault();
+          block.textContent = "";
+          document.execCommand("insertOrderedList");
+          return;
+        }
+        if (text === "- [ ]" || text === "[]") {
+          e.preventDefault();
+          block.textContent = "";
+          insertTodo();
+          return;
+        }
+      }
+
+      if (e.key === "Enter") {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        const block = closestBlock(range.startContainer as HTMLElement);
+        if (!block) return;
+        const text = block.textContent || "";
+        if (text.trim() === "```") {
+          e.preventDefault();
+          block.textContent = "";
+          toggleCodeBlock();
+        }
+      }
+    },
+    [exec, toggleCodeBlock, slashOpen, insertTodo, saveNow]
+  );
+
+  /* 에디터 입력 → 상태 반영 */
   const handleEditorInput = useCallback(() => {
-    skipEditorSyncRef.current = true;
-    syncBlocksFromEditor(editorRef, setBlocks);
+    isFromEditorRef.current = true;
+    const html = getEditorHtml(editorRef);
+    setBlocks([{ type: "doc", html }]);
   }, []);
 
-  const handleEditorClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement;
-    if (target && target.tagName === "INPUT" && (target as HTMLInputElement).type === "checkbox") {
-      const li = target.closest("li");
+  /* 체크박스 토글 처리 */
+  const handleEditorClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    if (t && t.tagName === "INPUT" && (t as HTMLInputElement).type === "checkbox") {
+      const li = t.closest("li");
       if (li) {
-        const checked = (target as HTMLInputElement).checked;
+        const checked = (t as HTMLInputElement).checked;
         li.setAttribute("data-checked", checked ? "true" : "false");
-        syncBlocksFromEditor(editorRef, setBlocks);
+        const html = getEditorHtml(editorRef);
+        isFromEditorRef.current = true;
+        setBlocks([{ type: "doc", html }]);
       }
     }
   }, []);
 
-  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      void saveNow();
-      return;
-    }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
-      event.preventDefault();
-      exec("bold");
-      return;
-    }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "i") {
-      event.preventDefault();
-      exec("italic");
-      return;
-    }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "u") {
-      event.preventDefault();
-      exec("underline");
-    }
-  }, [exec, saveNow]);
-
-  const handleTemplateField = useCallback((key: string, value: string) => {
-    const next = { ...fieldsRef.current, [key]: value };
-    fieldsRef.current = next;
-    setFields(next);
-    const html = replaceTemplateFields(currentHtml, next);
-    skipEditorSyncRef.current = true;
-    setBlocks([{ type: "doc", html }]);
-    setEditorHtml(editorRef, html);
+  /* 에디터 DOM 동기화 (미리보기는 모달에서만 렌더) */
+  useEffect(() => {
+    const html = currentHtml;
+    if (!isFromEditorRef.current) setEditorHtml(editorRef, html);
+    isFromEditorRef.current = false;
   }, [currentHtml]);
 
-  const handleApplyTemplate = useCallback((tpl: TemplateOption) => {
-    const html = tpl.html.trim();
-    skipEditorSyncRef.current = true;
-    setBlocks([{ type: "doc", html }]);
-    setEditorHtml(editorRef, html);
-    const nextFields: Record<string, string> = {};
-    extractTemplateKeys(html).forEach((key) => {
-      nextFields[key] = "";
+  /* PDF 내보내기 (A4 인쇄 CSS) */
+  const handleDownloadPDF = useCallback(() => {
+    const htmlContent = currentHtml;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    const docTitle = (title || "문서").replace(/[\\/:*?"<>|]/g, "_");
+    win.document.write(`
+      <html>
+      <head>
+        <title>${docTitle}.pdf</title>
+        <meta charset="utf-8" />
+        <style>
+          @page { size: A4; margin: 15mm; }
+          * { box-sizing: border-box; }
+          html, body { height: 100%; }
+          body {
+            font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Noto Sans", sans-serif;
+            margin: 0; color: #111827;
+          }
+          header { margin: 0 0 10mm; }
+          h1 { font-size: 20px; margin: 0 0 6mm; }
+          .content { font-size: 12pt; line-height: 1.7; }
+          .content img { max-width: 100%; height: auto; border-radius: 4px; }
+          pre { background:#f6f8fa; padding:8px 10px; border-radius:6px; overflow:auto; }
+          blockquote { border-left: 3px solid #e5e7eb; margin: 8px 0; padding: 4px 12px; color:#6b7280; }
+          hr { border: none; border-top: 1px solid #e5e7eb; margin: 12px 0; }
+          ul,ol { padding-left: 20px; }
+          .todo { list-style: none; padding-left: 0; }
+          .todo li { display:flex; gap:8px; align-items:flex-start; }
+          .todo li[data-checked="true"] .todo-text { text-decoration: line-through; color:#9ca3af; }
+          [data-page-break="before"] { break-before: page; }
+          [data-page-break="after"]  { break-after: page; }
+        </style>
+      </head>
+      <body>
+        <header><h1>${escapeHtml(title || "제목 없음")}</h1></header>
+        <div class="content">${htmlContent}</div>
+        <script>
+          const imgs = Array.from(document.images);
+          if (imgs.length === 0) { window.print(); }
+          let left = imgs.length;
+          imgs.forEach(img => {
+            if (img.complete) { if(--left === 0) window.print(); }
+            else { img.onload = img.onerror = () => { if(--left === 0) window.print(); }; }
+          });
+        </script>
+      </body>
+      </html>
+    `);
+    win.document.close();
+  }, [currentHtml, title]);
+
+  /* ✅ AI 재생성 실행 */
+  const runRegen = useCallback((kind: "resume" | "coverletter") => {
+    setRegenMsg("");
+    startTransition(async () => {
+      try {
+        const res = await regenerateDocument(kind);
+        setRegenMsg(`${res.title} 생성 완료`);
+      } catch (e: any) {
+        setRegenMsg(e?.message || "생성 실패");
+      }
     });
-    fieldsRef.current = nextFields;
-    setFields(nextFields);
-    setActiveTemplate(tpl.key);
   }, []);
 
-  if (loading) {
-    return <div className="p-6 text-gray-500">문서 불러오는 중...</div>;
-  }
-  if (error) {
-    return <div className="p-6 text-red-600">{error}</div>;
-  }
-  if (!doc) {
-    return <div className="p-6 text-gray-500">문서를 찾을 수 없습니다.</div>;
-  }
+  /* 로딩/에러 */
+  if (loading) return <div className="p-6 text-gray-500">문서 불러오는 중...</div>;
+  if (err) return <div className="p-6 text-red-600">{err}</div>;
+  if (!doc) return <div className="p-6 text-gray-500">문서를 찾을 수 없습니다。</div>;
 
+  /* UI */
   return (
-    <div className="grid h-full w-full grid-cols-1 gap-6 bg-white md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-      <div className="min-h-[calc(100vh-64px)] border-r border-gray-200 bg-white">
-        <div className="mx-auto w-full max-w-3xl px-6 py-8">
+    <div className="p-0 grid grid-cols-2 gap-0 bg-white">
+      {/* 좌측: 제목 + 에디터 */}
+      <div className="border-r min-h-[calc(100vh-64px)]">
+        <div ref={writerPaneRef} className="max-w-3xl mx-auto px-8 py-8">
           <input
-            className="w-full border-0 text-3xl font-semibold tracking-tight outline-none placeholder:text-gray-300 focus:ring-0"
+            className="w-full text-3xl font-semibold tracking-tight outline-none border-0 focus:ring-0 placeholder:text-gray-300"
             value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            onChange={(e) => setTitle(e.target.value)}
             onBlur={saveTitle}
             placeholder="제목을 입력하세요"
           />
 
-          <div className="mt-4 flex flex-wrap items-center gap-1 rounded-xl border bg-white/80 px-1 py-1 shadow-sm">
+          {/* 툴바 + 저장상태 + PDF + ✅ AI 재생성 버튼 */}
+          <div className="sticky top-2 z-10 mt-4 flex items-center gap-1 flex-wrap bg-white/70 backdrop-blur border rounded-xl px-1 py-1 shadow-sm select-none">
             <ToolbarButton onClick={() => exec("bold")} title="굵게 (Ctrl/⌘+B)">B</ToolbarButton>
             <ToolbarButton onClick={() => exec("italic")} title="기울임 (Ctrl/⌘+I)">I</ToolbarButton>
             <ToolbarButton onClick={() => exec("underline")} title="밑줄 (Ctrl/⌘+U)">U</ToolbarButton>
+
             <ToolbarDivider />
             <ToolbarButton onClick={() => exec("formatBlock", "h1")} title="제목 1">H1</ToolbarButton>
             <ToolbarButton onClick={() => exec("formatBlock", "h2")} title="제목 2">H2</ToolbarButton>
+            <ToolbarButton onClick={() => exec("formatBlock", "blockquote")} title="인용문">“ ”</ToolbarButton>
+            <ToolbarButton onClick={() => exec("insertHorizontalRule")} title="구분선">—</ToolbarButton>
+
             <ToolbarDivider />
             <ToolbarButton onClick={() => exec("insertUnorderedList")} title="글머리 목록">•</ToolbarButton>
             <ToolbarButton onClick={() => exec("insertOrderedList")} title="번호 목록">1.</ToolbarButton>
+            <ToolbarButton onClick={toggleCodeBlock} title="코드 블록">{`</>`}</ToolbarButton>
             <ToolbarButton onClick={insertTodo} title="체크박스">☑︎</ToolbarButton>
             <ToolbarButton onClick={insertLink} title="링크 삽입">🔗</ToolbarButton>
             <ToolbarButton onClick={insertImage} title="이미지 삽입">🖼</ToolbarButton>
+
             <div className="ml-auto flex items-center gap-2 pr-1">
+              {/* ✅ 여기 무조건 보임 */}
+              <button
+                disabled={isPending}
+                onClick={() => runRegen("resume")}
+                className="h-8 px-2 text-xs rounded-lg bg-black text-white hover:opacity-90 disabled:opacity-50"
+                type="button"
+                title="이력서_초안을 AI로 다시 생성"
+              >
+                {isPending ? "생성 중…" : "이력서 AI 재생성"}
+              </button>
+              <button
+                disabled={isPending}
+                onClick={() => runRegen("coverletter")}
+                className="h-8 px-2 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                type="button"
+                title="자기소개서_초안을 AI로 다시 생성"
+              >
+                {isPending ? "생성 중…" : "자기소개서 AI 재생성"}
+              </button>
+              {regenMsg && <span className="text-[11px] text-gray-500">{regenMsg}</span>}
+
               <span
                 className={
-                  "rounded-md border px-2 py-1 text-xs " +
+                  "text-xs px-2 py-1 rounded-md border " +
                   (saveState === "saving"
-                    ? "border-amber-200 bg-amber-50 text-amber-600"
+                    ? "text-amber-600 border-amber-200 bg-amber-50"
                     : saveState === "saved"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-600"
-                      : saveState === "error"
-                        ? "border-rose-200 bg-rose-50 text-rose-600"
-                        : "border-gray-200 bg-white text-gray-500")
+                    ? "text-emerald-600 border-emerald-200 bg-emerald-50"
+                    : saveState === "error"
+                    ? "text-rose-600 border-rose-200 bg-rose-50"
+                    : "text-gray-500 border-gray-200 bg-white")
                 }
               >
                 {saveMsg || "대기"}
               </span>
               <button
-                className="h-8 rounded-lg border bg-white px-2 text-xs text-gray-700 shadow-sm"
-                onClick={saveNow}
+                className="h-8 px-2 text-xs rounded-lg border bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-700 shadow-sm"
+                onClick={handleDownloadPDF}
+                title="브라우저 인쇄 대화상자가 열리고 PDF로 저장할 수 있어요."
                 type="button"
               >
-                저장
+                ⬇️ PDF
               </button>
             </div>
           </div>
 
+          {/* 에디터 */}
           <div
             ref={editorRef}
-            className="mt-4 min-h-[58vh] rounded-xl bg-white p-5 outline-none
+            className="mt-4 rounded-xl min-h-[58vh] p-5 outline-none bg-white
                        prose prose-neutral max-w-none
-                       [&_p]:my-2 [&_h1]:text-3xl [&_h1]:font-semibold
-                       [&_h2]:text-2xl [&_blockquote]:border-l-2 [&_blockquote]:border-gray-200
-                       [&_blockquote]:pl-4 [&_blockquote]:text-gray-600
-                       [&_pre]:rounded-lg [&_pre]:bg-gray-50 [&_pre]:p-3
-                       [&_.todo]:list-none"
+                       [&_p]:my-2 [&_h1]:text-3xl [&_h2]:text-2xl
+                       [&_blockquote]:border-l-2 [&_blockquote]:border-gray-200 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600
+                       [&_pre]:bg-gray-50 [&_pre]:p-3 [&_pre]:rounded-lg
+                       [&_.todo]:list-none [&_.todo_li]:m-0"
             contentEditable
             suppressContentEditableWarning
             onInput={handleEditorInput}
@@ -797,6 +544,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
             data-placeholder="여기에 내용을 입력하세요…"
           />
 
+          {/* 에디터 placeholder */}
           <style jsx>{`
             [contenteditable][data-placeholder]:empty:before {
               content: attr(data-placeholder);
@@ -805,198 +553,148 @@ export default function DocumentPane({ docId }: { docId: string }) {
             }
           `}</style>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onPickImage}
-          />
+          {/* 이미지 파일 입력(숨김) */}
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
         </div>
       </div>
 
-      <div className="min-h-[calc(100vh-64px)] bg-gray-50">
-        <div className="px-6 py-8">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="text-sm font-semibold text-gray-700">템플릿 탐색</div>
+      {/* 우측: 현재는 비워둠 (미리보기는 모달에서만) */}
+      <div className="min-h-[calc(100vh-64px)] relative" />
+
+      {/* 하단 플로팅 배너 — Portal (문서작성 영역 중앙, 하단에서 조금 위) */}
+      {mounted && bannerCenterX !== null &&
+        createPortal(
+          <div
+            className="fixed z-[9999]"
+            style={{
+              left: `${bannerCenterX}px`,
+              transform: "translateX(-50%)",
+              bottom: "96px"
+            }}
+          >
             <button
+              onClick={() => {
+                setPreviewHtmlSnap(currentHtml); // 스냅샷 고정
+                setPreviewOpen(true);
+              }}
+              className="shadow-xl rounded-full border bg-white/90 backdrop-blur px-4 py-2 text-sm flex items-center gap-2 hover:bg-white active:scale-[0.99] transition"
+              title="미리보기로 A4 페이지 분할 상태를 확인합니다"
               type="button"
-              onClick={() => setTemplateSearch("")}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-500"
             >
-              <FileStack className="h-3 w-3" /> 초기화
+              미리보기 ▸
             </button>
-          </div>
+          </div>,
+          document.body
+        )}
 
-          <input
-            value={templateSearch}
-            onChange={(event) => setTemplateSearch(event.target.value)}
-            className="mb-4 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-200"
-            placeholder="템플릿 검색"
-          />
-
-          <div className="space-y-6">
-            {filteredGroups.map((group) => (
-              <div key={group.category} className="space-y-2">
+      {/* 미리보기 모달 — Portal */}
+      {mounted && previewOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998]">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setPreviewOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="absolute inset-4 md:inset-8 bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-white/70 backdrop-blur">
+                <div className="text-sm text-gray-600">A4 미리보기</div>
                 <div className="flex items-center gap-2">
-                  <div className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${group.toneClass}`}>
-                    <group.icon className="h-4 w-4" />
-                  </div>
-                  <div className="text-sm font-semibold text-gray-700">{group.category}</div>
-                </div>
-                <div className="space-y-2">
-                  {group.templates.map((tpl) => (
-                    <button
-                      key={tpl.key}
-                      type="button"
-                      onClick={() => handleApplyTemplate(tpl)}
-                      className={
-                        "flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition " +
-                        (activeTemplate === tpl.key
-                          ? "border-sky-300 bg-sky-50"
-                          : "border-gray-200 bg-white hover:border-sky-200 hover:bg-sky-50/60")
-                      }
-                    >
-                      <div className="mt-1 rounded-md bg-gray-100 p-2 text-gray-600">
-                        <tpl.icon className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <div className="text-sm font-medium text-gray-700">{tpl.label}</div>
-                        <p className="text-xs text-gray-500">{tpl.description}</p>
-                      </div>
-                    </button>
-                  ))}
+                  <button
+                    onClick={() => setPreviewOpen(false)}
+                    className="h-8 px-3 text-sm rounded-lg border bg-white hover:bg-gray-50"
+                    type="button"
+                  >
+                    닫기 ✕
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-
-          {placeholderKeys.length > 0 && (
-            <div className="mt-8 space-y-3">
-              <div className="text-sm font-semibold text-gray-700">템플릿 변수</div>
-              <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-4">
-                {placeholderKeys.map((key) => (
-                  <div key={key} className="space-y-1">
-                    <label className="text-xs font-medium text-gray-600">{`{{${key}}}`}</label>
-                    <input
-                      value={fields[key] ?? ""}
-                      onChange={(event) => handleTemplateField(key, event.target.value)}
-                      className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-200"
-                      placeholder="입력값이 본문에 반영됩니다."
-                    />
-                  </div>
-                ))}
+              <div className="flex-1 min-h-0 bg-gray-50">
+                <A4Preview html={previewHtmlSnap || currentHtml} autoScale showToolbar />
               </div>
             </div>
-          )}
-        </div>
-      </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
 
+/* ---------- UI 소품 ---------- */
 function ToolbarButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const { className = "", ...rest } = props;
   return (
     <button
       className={
-        "inline-flex h-8 items-center justify-center gap-1 rounded-lg border bg-white px-2 text-xs text-gray-700 shadow-sm transition hover:bg-gray-50 active:bg-gray-100 " +
+        "inline-flex items-center justify-center gap-1 h-8 px-2 text-xs " +
+        "rounded-lg border bg-white hover:bg-gray-50 active:bg-gray-100 " +
+        "text-gray-700 shadow-sm transition whitespace-nowrap break-keep leading-none select-none " +
         className
       }
-      type="button"
       {...rest}
+      type="button"
     />
   );
 }
-
 function ToolbarDivider() {
-  return <div className="mx-1 h-6 w-px bg-gray-200" />;
+  return <div className="w-px h-6 bg-gray-200 mx-1" />;
 }
 
-function escapeHtml(str: string) {
-  return (str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function blockHtml(blocks: Block[]) {
-  if (!blocks || blocks.length === 0) return "";
-  const docBlock = blocks.find((b) => (b as any).html) as Block | undefined;
-  if (docBlock && "html" in docBlock && docBlock.html) return docBlock.html;
-  const lines = blocks
-    .map((b) => ((b as any).text ? escapeHtml((b as any).text) : ""))
-    .join("</p><p>");
-  return `<p>${lines}</p>`;
-}
-
-function toDocHtml(blocks: Block[]) {
-  return blockHtml(blocks);
-}
-
+/* ---------- 유틸 ---------- */
 function getEditorHtml(ref: React.RefObject<HTMLDivElement>) {
   return (ref.current?.innerHTML || "").trim();
 }
-
 function setEditorHtml(ref: React.RefObject<HTMLDivElement>, html: string) {
-  const element = ref.current;
-  if (!element) return;
-  const next = html || "";
-  if (element.innerHTML === next) return;
-  const shouldRestoreSelection = typeof document !== "undefined" && document.activeElement === element;
-  element.innerHTML = next;
-  if (shouldRestoreSelection && typeof window !== "undefined") {
-    const selection = window.getSelection();
-    if (selection) {
-      selection.selectAllChildren(element);
-      selection.collapseToEnd();
-    }
-  }
+  if (ref.current) ref.current.innerHTML = html || "";
 }
-
-function extractTemplateKeys(html: string) {
-  const keys = new Set<string>();
-  const regex = /{{(.*?)}}/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(html)) !== null) {
-    const key = match[1]?.trim();
-    if (key) keys.add(key);
-  }
-  return Array.from(keys);
+function blockHtml(blocks: Block[]) {
+  if (!blocks || blocks.length === 0) return "";
+  const doc = (blocks as any[]).find((b) => (b as any).html) as any;
+  if (doc?.html) return doc.html;
+  const lines = (blocks as any[]).map((b) => (b.text ? escapeHtml(b.text) : "")).join("</p><p>");
+  return `<p>${lines}</p>`;
 }
-
+function toDocHtml(blocks: Block[]) {
+  return blockHtml(blocks);
+}
+function escapeHtml(str: string) {
+  return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function safeHtml(str: string) {
+  return escapeHtml(str).replace(/\n/g, "<br>");
+}
+function closestBlock(node: HTMLElement | Node | null): HTMLElement | null {
+  let el = node as HTMLElement | null;
+  while (el && el.nodeType === 3) el = el.parentElement;
+  while (el && !/^(P|DIV|LI|H1|H2|BLOCKQUOTE|PRE|UL|OL)$/.test(el.tagName)) el = el.parentElement;
+  return el;
+}
+function isCaretAtStart(block: HTMLElement, sel: Selection) {
+  if (!sel.anchorNode) return false;
+  const range = sel.getRangeAt(0).cloneRange();
+  range.selectNodeContents(block);
+  range.setEnd(sel.anchorNode, sel.anchorOffset);
+  const textBefore = range.toString();
+  return textBefore.trim() === "";
+}
+function isCaretAtLineStart() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  const block = closestBlock(sel.getRangeAt(0).startContainer as HTMLElement);
+  if (!block) return false;
+  return isCaretAtStart(block, sel);
+}
 function insertHtmlAtCaret(html: string, editorRef: React.RefObject<HTMLDivElement>) {
   editorRef.current?.focus();
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
   range.deleteContents();
-  const temp = document.createElement("div");
-  temp.innerHTML = html;
+  const el = document.createElement("div");
+  el.innerHTML = html;
   const frag = document.createDocumentFragment();
   let node: ChildNode | null;
-  while ((node = temp.firstChild)) {
-    frag.appendChild(node);
-  }
+  while ((node = el.firstChild)) frag.appendChild(node);
   range.insertNode(frag);
   sel.collapseToEnd();
-}
-
-function syncBlocksFromEditor(
-  editorRef: React.RefObject<HTMLDivElement>,
-  setBlocks: React.Dispatch<React.SetStateAction<Block[]>>,
-) {
-  const html = getEditorHtml(editorRef);
-  setBlocks([{ type: "doc", html }]);
-}
-
-function replaceTemplateFields(html: string, map: Record<string, string>) {
-  return html.replace(/{{(.*?)}}/g, (match, rawKey) => {
-    const key = String(rawKey ?? "").trim();
-    const value = map[key];
-    if (value === undefined || value.trim() === "") {
-      return match;
-    }
-    return escapeHtml(value).replace(/\n/g, "<br>");
-  });
 }

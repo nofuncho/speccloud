@@ -14,23 +14,30 @@ datasource db {
  * ===========================
  */
 model User {
-  id           String    @id @default(cuid())
-  name         String?
-  email        String    @unique
-  password     String    // Credentials Provider용 해시 저장
-  image        String?
+  id            String      @id @default(cuid())
+  name          String?
+  email         String       @unique
+  password      String       // Credentials Provider용 해시 저장
+  image         String?
   emailVerified DateTime?
 
   // NextAuth relations
-  accounts     Account[]
-  sessions     Session[]
+  accounts      Account[]
+  sessions      Session[]
 
   // App relations
-  folders      Folder[]
-  documents    Document[]
+  folders       Folder[]
+  documents     Document[]
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  // Onboarding / Profile (선택: 역참조)
+  profile       UserProfile?
+  experiences   Experience[]
+  projects      Project[]
+  certs         Certification[]
+  languages     LanguageSkill[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }
 
 model Account {
@@ -74,7 +81,6 @@ model VerificationToken {
  * App Models
  * ===========================
  */
-
 model Folder {
   id          String      @id @default(cuid())
   name        String
@@ -97,7 +103,7 @@ model Folder {
   @@index([parentId])
   @@index([type, createdAt])
   @@index([createdById, parentId])
-  @@unique([createdById, parentId, name]) // 같은 사용자/같은 부모 아래 동일 폴더명 방지
+  @@unique([createdById, parentId, name])
 }
 
 enum FolderType {
@@ -123,9 +129,9 @@ model Document {
   content     Json
 
   // 옵션 필드 (UI 테이블 컬럼)
-  company     String?   // ✅ 회사명
-  role        String?   // ✅ 직무/포지션
-  status      String?   // ✅ "draft" | "final" | "verified" 등 라벨 문자열
+  company     String?
+  role        String?
+  status      String?
   templateKey String?
 
   createdAt   DateTime  @default(now())
@@ -152,4 +158,110 @@ enum TemplateCategory {
   COVERLETTER
   RESUME
   PORTFOLIO
+}
+
+/**
+ * ===========================
+ * Onboarding / Profile Models
+ * ===========================
+ * - MySQL: 원시 배열 불가 → Json 사용
+ * - 경력/프로젝트 등은 User에 직접 종속(createdById)
+ */
+model UserProfile {
+  id            String   @id @default(cuid())
+  createdById   String   @unique
+  createdBy     User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  // 기본 인적사항
+  name          String
+  email         String
+  phone         String?
+
+  // 학력
+  school        String?
+  major         String?
+  graduationY   Int?
+  gpa           Float?
+  gpaMax        Float?
+
+  // 관심/스킬 (원시 배열 → Json)
+  // 예: ["마케팅","데이터"], ["React","SQL"]
+  interests     Json?
+  skills        Json?
+
+  // 경력 여부/요약
+  isExperienced Boolean  @default(false)
+  totalYears    Float?
+  currentCompany String?
+  currentRole    String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Experience {
+  id          String   @id @default(cuid())
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  company     String
+  role        String
+  startDate   DateTime
+  endDate     DateTime?
+  summary     String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([createdById, startDate])
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  name        String
+  role        String?
+  startDate   DateTime?
+  endDate     DateTime?
+  problem     String?
+  action      String?
+  result      String?
+
+  // 원시 배열 불가 → Json (예: ["React","MySQL"])
+  techStack   Json?
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([createdById, startDate])
+}
+
+model Certification {
+  id          String   @id @default(cuid())
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  name        String
+  year        Int?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([createdById, year])
+}
+
+model LanguageSkill {
+  id          String   @id @default(cuid())
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  name        String    // TOEIC, OPIc ...
+  level       String?   // 900, AL ...
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([createdById, name])
 }

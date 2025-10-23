@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import SidebarOnboardingCard from "@/components/SidebarOnboardingCard"; // ✅ 클라이언트 배너 섬
 
 type FolderSummary = { id: string; name: string; parentId: string | null };
 type Props = { roots: { id: string; name: string }[]; activeFolderId: string | null };
@@ -41,7 +42,7 @@ function getInitialAndColor(name?: string | null, email?: string | null) {
 /** 간단 온도 게이지 */
 function ThermoGauge({ celsius = 36.5 }: { celsius?: number }) {
   const min = 34, max = 40;
-  const pct = Math.max(0, Math.min(100, ((celsius - min) / (max - min)) * 100));
+  const pct = Math.max(0, Math.min(100, ((celsius - min) / (max - max + 6)) * 100)); // keep same scale
   return (
     <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
       <div className="h-full bg-gradient-to-r from-rose-400 via-amber-400 to-lime-400" style={{ width: `${pct}%` }} />
@@ -83,7 +84,7 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
     );
   }
 
-  // 폴더 목록(플레이스홀더 계산 용)
+  // 폴더 목록
   const all = await prisma.folder.findMany({
     where: { createdById: userId },
     orderBy: { createdAt: "asc" },
@@ -102,6 +103,11 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
   return (
     <div className="flex h-full flex-col">
       <Logo />
+
+      {/* ✅ 최상단: 온보딩 배너 (클라이언트 섬) */}
+      <div className="px-3 pt-3">
+        <SidebarOnboardingCard imageSrc="/chaltteok.png" />
+      </div>
 
       {/* Nav (하위폴더 비노출) */}
       <nav className="mt-3 flex-1 space-y-4 text-[15px] px-3">
