@@ -14,9 +14,11 @@ export async function GET(req: Request) {
       title: true,
       content: true,
       templateKey: true,
-      folder: {
-        select: { type: true },
-      },
+      updatedAt: true, // ✅ 추가
+      company: true,   // ✅ 추가
+      role: true,      // ✅ 추가
+      status: true,    // ✅ 추가
+      folder: { select: { type: true } },
     },
   });
   if (!doc) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -27,5 +29,9 @@ export async function GET(req: Request) {
     content: doc.content,
     templateKey: doc.templateKey,
     folderType: doc.folder?.type ?? null,
+    updatedAt: doc.updatedAt,
+    company: doc.company ?? null,
+    role: doc.role ?? null,
+    status: doc.status ?? null,
   });
 }

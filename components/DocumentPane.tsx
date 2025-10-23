@@ -5,15 +5,24 @@ import { useEffect, useState, useCallback, useRef, useMemo, useTransition } from
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { renameDocument, saveDocumentJson } from "@/app/actions/folderActions";
-/* ✅ 추가: 서버액션 직접 호출 */
 import { regenerateDocument } from "@/app/actions/regenerateActions";
 
-/* ---------- A4 미리보기: 모달 열 때만 동적 로드 ---------- */
+/* ✅ 태그 자동완성 + 메타 저장 */
+import TagCombobox from "@/components/TagCombobox";
+import { updateDocumentMeta } from "@/app/actions/documentMeta";
+
+/* ---------- A4 미리보기 ---------- */
 const A4Preview = dynamic(() => import("@/components/A4Preview"), { ssr: false, loading: () => null });
 
 /* ---------- 타입 ---------- */
 type Block = { type: "doc"; html: string } | { type: string; text?: string; html?: string };
-type Doc = { id: string; title: string; content: { blocks: Block[] } | null };
+type Doc = {
+  id: string;
+  title: string;
+  content: { blocks: Block[] } | null;
+  company?: string | null;
+  role?: string | null;
+};
 type SaveState = "idle" | "saving" | "saved" | "error";
 
 /* ---------- 컴포넌트 ---------- */
@@ -26,11 +35,11 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  /* 자동저장 상태 */
+  /* 저장 상태 */
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMsg, setSaveMsg] = useState<string>("");
 
-  /* ✅ 추가: 재생성 진행상태/메시지 */
+  /* 재생성 상태 */
   const [regenMsg, setRegenMsg] = useState<string>("");
   const [isPending, startTransition] = useTransition();
 
@@ -38,13 +47,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  /* 내부 상태 */
+  /* 내부 ref */
   const isFromEditorRef = useRef(false);
   const lastSavedHtmlRef = useRef<string>("");
   const lastSavedTitleRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* 슬래시 메뉴 */
+  /* /, ESC */
   const [slashOpen, setSlashOpen] = useState(false);
 
   /* 미리보기 모달 */
@@ -52,7 +61,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const currentHtml = useMemo(() => blockHtml(blocks), [blocks]);
   const [previewHtmlSnap, setPreviewHtmlSnap] = useState<string>("");
 
-  /* 배너를 문서작성 영역 기준으로 중앙 정렬하기 위한 ref/좌표 */
+  /* 배너 위치 기준 */
   const writerPaneRef = useRef<HTMLDivElement | null>(null);
   const [bannerCenterX, setBannerCenterX] = useState<number | null>(null);
   useEffect(() => {
@@ -70,9 +79,51 @@ export default function DocumentPane({ docId }: { docId: string }) {
     };
   }, []);
 
-  /* Portal 렌더 준비 */
+  /* Portal 준비 */
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  /* ✅ 회사/포지션 태그 상태 + 필드별 디바운스 타이머 */
+  const [companyTag, setCompanyTag] = useState<string>("");
+  const [roleTag, setRoleTag] = useState<string>("");
+  const metaTimersRef = useRef<{
+    company: ReturnType<typeof setTimeout> | null;
+    role: ReturnType<typeof setTimeout> | null;
+  }>({ company: null, role: null });
+
+  const saveMeta = useCallback(
+    (key: "company" | "role", val: string) => {
+      if (!doc) return;
+      const timers = metaTimersRef.current;
+      if (timers[key]) clearTimeout(timers[key]!);
+
+      setSaveState("saving");
+      setSaveMsg("메타 저장 대기…");
+
+      timers[key] = setTimeout(async () => {
+        try {
+          await updateDocumentMeta(doc.id, key === "company" ? { company: val } : { role: val });
+          setSaveState("saved");
+          setSaveMsg("메타 저장됨");
+          setTimeout(() => setSaveState("idle"), 900);
+        } catch {
+          setSaveState("error");
+          setSaveMsg("메타 저장 실패");
+        } finally {
+          timers[key] = null;
+        }
+      }, 250);
+    },
+    [doc]
+  );
+
+  useEffect(() => {
+    return () => {
+      const t = metaTimersRef.current;
+      if (t.company) clearTimeout(t.company);
+      if (t.role) clearTimeout(t.role);
+    };
+  }, []);
 
   /* 문서 로드 */
   useEffect(() => {
@@ -93,6 +144,10 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
         setDoc(data);
         setTitle(data?.title || "");
+
+        /* ✅ 회사/포지션 태그 초기화 */
+        setCompanyTag(data?.company || "");
+        setRoleTag(data?.role || "");
 
         const rawBlocks = data?.content?.blocks || [];
         const docHtml = toDocHtml(rawBlocks);
@@ -132,7 +187,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [fields, blocks]
   );
 
-  /* execCommand */
+  /* Rich-text exec */
   const exec = useCallback((cmd: string, value?: string) => {
     document.execCommand(cmd, false, value);
     editorRef.current?.focus();
@@ -146,7 +201,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     const container = closestBlock(range.startContainer as HTMLElement);
     if (!container) return;
 
-    if (container.tagName === "PRE") {
+    if ((container as HTMLElement).tagName === "PRE") {
       const code = container.querySelector("code");
       const text = (code ? code.textContent : container.textContent) || "";
       const p = document.createElement("p");
@@ -161,7 +216,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     }
   }, []);
 
-  /* 링크/체크박스/이미지 삽입 */
+  /* 링크/체크박스/이미지 */
   const insertLink = useCallback(() => {
     const url = prompt("링크 URL을 입력하세요 (예: https://example.com)");
     if (!url) return;
@@ -209,7 +264,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     }
   }, [title, doc]);
 
-  /* 즉시 저장 */
+  /* 내용/제목 저장 */
   const saveNow = useCallback(async () => {
     if (!doc) return;
     const html = (getEditorHtml(editorRef) || "").trim();
@@ -238,7 +293,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     }
   }, [doc, title]);
 
-  /* 자동저장 (800ms) */
+  /* 자동저장 */
   useEffect(() => {
     if (!doc) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -250,7 +305,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     };
   }, [blocks, title, doc, saveNow]);
 
-  /* 단축키 + 마크다운라이크 + /커맨드 */
+  /* 키 핸들링 */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
@@ -368,14 +423,14 @@ export default function DocumentPane({ docId }: { docId: string }) {
     }
   }, []);
 
-  /* 에디터 DOM 동기화 (미리보기는 모달에서만 렌더) */
+  /* 에디터 DOM 동기화 */
   useEffect(() => {
     const html = currentHtml;
     if (!isFromEditorRef.current) setEditorHtml(editorRef, html);
     isFromEditorRef.current = false;
   }, [currentHtml]);
 
-  /* PDF 내보내기 (A4 인쇄 CSS) */
+  /* PDF 내보내기 */
   const handleDownloadPDF = useCallback(() => {
     const htmlContent = currentHtml;
     const win = window.open("", "_blank");
@@ -427,7 +482,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     win.document.close();
   }, [currentHtml, title]);
 
-  /* ✅ AI 재생성 실행 */
+  /* ✅ AI 재생성 */
   const runRegen = useCallback((kind: "resume" | "coverletter") => {
     setRegenMsg("");
     startTransition(async () => {
@@ -447,134 +502,155 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   /* UI */
   return (
-    <div className="p-0 grid grid-cols-2 gap-0 bg-white">
-      {/* 좌측: 제목 + 에디터 */}
-      <div className="border-r min-h-[calc(100vh-64px)]">
-        <div ref={writerPaneRef} className="max-w-3xl mx-auto px-8 py-8">
-          <input
-            className="w-full text-3xl font-semibold tracking-tight outline-none border-0 focus:ring-0 placeholder:text-gray-300"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={saveTitle}
-            placeholder="제목을 입력하세요"
-          />
+    <div className="p-0 bg-white">
+      {/* 데스크톱: 좌우 2열, 모바일: 1열 */}
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col lg:flex-row">
+        {/* 좌측(유연폭): 작성 영역 넓게 */}
+        <div className="min-h-[calc(100vh-64px)] flex-1 min-w-0 lg:border-r">
+          <div ref={writerPaneRef} className="mx-auto max-w-5xl px-6 lg:px-10 py-8">
+            <input
+              className="w-full text-3xl font-semibold tracking-tight outline-none border-0 focus:ring-0 placeholder:text-gray-300"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={saveTitle}
+              placeholder="제목을 입력하세요"
+            />
 
-          {/* 툴바 + 저장상태 + PDF + ✅ AI 재생성 버튼 */}
-          <div className="sticky top-2 z-10 mt-4 flex items-center gap-1 flex-wrap bg-white/70 backdrop-blur border rounded-xl px-1 py-1 shadow-sm select-none">
-            <ToolbarButton onClick={() => exec("bold")} title="굵게 (Ctrl/⌘+B)">B</ToolbarButton>
-            <ToolbarButton onClick={() => exec("italic")} title="기울임 (Ctrl/⌘+I)">I</ToolbarButton>
-            <ToolbarButton onClick={() => exec("underline")} title="밑줄 (Ctrl/⌘+U)">U</ToolbarButton>
-
-            <ToolbarDivider />
-            <ToolbarButton onClick={() => exec("formatBlock", "h1")} title="제목 1">H1</ToolbarButton>
-            <ToolbarButton onClick={() => exec("formatBlock", "h2")} title="제목 2">H2</ToolbarButton>
-            <ToolbarButton onClick={() => exec("formatBlock", "blockquote")} title="인용문">“ ”</ToolbarButton>
-            <ToolbarButton onClick={() => exec("insertHorizontalRule")} title="구분선">—</ToolbarButton>
-
-            <ToolbarDivider />
-            <ToolbarButton onClick={() => exec("insertUnorderedList")} title="글머리 목록">•</ToolbarButton>
-            <ToolbarButton onClick={() => exec("insertOrderedList")} title="번호 목록">1.</ToolbarButton>
-            <ToolbarButton onClick={toggleCodeBlock} title="코드 블록">{`</>`}</ToolbarButton>
-            <ToolbarButton onClick={insertTodo} title="체크박스">☑︎</ToolbarButton>
-            <ToolbarButton onClick={insertLink} title="링크 삽입">🔗</ToolbarButton>
-            <ToolbarButton onClick={insertImage} title="이미지 삽입">🖼</ToolbarButton>
-
-            <div className="ml-auto flex items-center gap-2 pr-1">
-              {/* ✅ 여기 무조건 보임 */}
-              <button
-                disabled={isPending}
-                onClick={() => runRegen("resume")}
-                className="h-8 px-2 text-xs rounded-lg bg-black text-white hover:opacity-90 disabled:opacity-50"
-                type="button"
-                title="이력서_초안을 AI로 다시 생성"
-              >
-                {isPending ? "생성 중…" : "이력서 AI 재생성"}
-              </button>
-              <button
-                disabled={isPending}
-                onClick={() => runRegen("coverletter")}
-                className="h-8 px-2 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
-                type="button"
-                title="자기소개서_초안을 AI로 다시 생성"
-              >
-                {isPending ? "생성 중…" : "자기소개서 AI 재생성"}
-              </button>
-              {regenMsg && <span className="text-[11px] text-gray-500">{regenMsg}</span>}
-
-              <span
-                className={
-                  "text-xs px-2 py-1 rounded-md border " +
-                  (saveState === "saving"
-                    ? "text-amber-600 border-amber-200 bg-amber-50"
-                    : saveState === "saved"
-                    ? "text-emerald-600 border-emerald-200 bg-emerald-50"
-                    : saveState === "error"
-                    ? "text-rose-600 border-rose-200 bg-rose-50"
-                    : "text-gray-500 border-gray-200 bg-white")
-                }
-              >
-                {saveMsg || "대기"}
-              </span>
-              <button
-                className="h-8 px-2 text-xs rounded-lg border bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-700 shadow-sm"
-                onClick={handleDownloadPDF}
-                title="브라우저 인쇄 대화상자가 열리고 PDF로 저장할 수 있어요."
-                type="button"
-              >
-                ⬇️ PDF
-              </button>
+            {/* ✅ 제목 아래: 회사/포지션 태그 편집 바 */}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <TagCombobox
+                type="company"
+                value={companyTag}
+                placeholder="지원하는 회사명"
+                onChange={(v) => {
+                  setCompanyTag(v);
+                  saveMeta("company", v);
+                }}
+              />
+              <TagCombobox
+                type="role"
+                value={roleTag}
+                placeholder="포지션"
+                onChange={(v) => {
+                  setRoleTag(v);
+                  saveMeta("role", v);
+                }}
+              />
             </div>
+
+            {/* 툴바 */}
+            <div className="sticky top-2 z-10 mt-4 flex items-center gap-1 flex-wrap bg-white/70 backdrop-blur border rounded-xl px-1 py-1 shadow-sm select-none">
+              <ToolbarButton onClick={() => exec("bold")} title="굵게 (Ctrl/⌘+B)">B</ToolbarButton>
+              <ToolbarButton onClick={() => exec("italic")} title="기울임 (Ctrl/⌘+I)">I</ToolbarButton>
+              <ToolbarButton onClick={() => exec("underline")} title="밑줄 (Ctrl/⌘+U)">U</ToolbarButton>
+
+              <ToolbarDivider />
+              <ToolbarButton onClick={() => exec("formatBlock", "h1")} title="제목 1">H1</ToolbarButton>
+              <ToolbarButton onClick={() => exec("formatBlock", "h2")} title="제목 2">H2</ToolbarButton>
+              <ToolbarButton onClick={() => exec("formatBlock", "blockquote")} title="인용문">“ ”</ToolbarButton>
+              <ToolbarButton onClick={() => exec("insertHorizontalRule")} title="구분선">—</ToolbarButton>
+
+              <ToolbarDivider />
+              <ToolbarButton onClick={() => exec("insertUnorderedList")} title="글머리 목록">•</ToolbarButton>
+              <ToolbarButton onClick={() => exec("insertOrderedList")} title="번호 목록">1.</ToolbarButton>
+              <ToolbarButton onClick={toggleCodeBlock} title="코드 블록">{`</>`}</ToolbarButton>
+              <ToolbarButton onClick={insertTodo} title="체크박스">☑︎</ToolbarButton>
+              <ToolbarButton onClick={insertLink} title="링크 삽입">🔗</ToolbarButton>
+              <ToolbarButton onClick={insertImage} title="이미지 삽입">🖼</ToolbarButton>
+
+              <div className="ml-auto flex items-center gap-2 pr-1">
+                {/* ✅ AI 재생성 */}
+                <button
+                  disabled={isPending}
+                  onClick={() => runRegen("resume")}
+                  className="h-8 px-2 text-xs rounded-lg bg-black text-white hover:opacity-90 disabled:opacity-50"
+                  type="button"
+                  title="이력서_초안을 AI로 다시 생성"
+                >
+                  {isPending ? "생성 중…" : "이력서 AI 재생성"}
+                </button>
+                <button
+                  disabled={isPending}
+                  onClick={() => runRegen("coverletter")}
+                  className="h-8 px-2 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                  type="button"
+                  title="자기소개서_초안을 AI로 다시 생성"
+                >
+                  {isPending ? "생성 중…" : "자기소개서 AI 재생성"}
+                </button>
+                {regenMsg && <span className="text-[11px] text-gray-500">{regenMsg}</span>}
+
+                <span
+                  className={
+                    "text-xs px-2 py-1 rounded-md border " +
+                    (saveState === "saving"
+                      ? "text-amber-600 border-amber-200 bg-amber-50"
+                      : saveState === "saved"
+                      ? "text-emerald-600 border-emerald-200 bg-emerald-50"
+                      : saveState === "error"
+                      ? "text-rose-600 border-rose-200 bg-rose-50"
+                      : "text-gray-500 border-gray-200 bg-white")
+                  }
+                >
+                  {saveMsg || "대기"}
+                </span>
+                <button
+                  className="h-8 px-2 text-xs rounded-lg border bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-700 shadow-sm"
+                  onClick={handleDownloadPDF}
+                  title="브라우저 인쇄 대화상자가 열리고 PDF로 저장할 수 있어요."
+                  type="button"
+                >
+                  ⬇️ PDF
+                </button>
+              </div>
+            </div>
+
+            {/* 에디터 */}
+            <div
+              ref={editorRef}
+              className="mt-4 rounded-xl min-h-[58vh] p-5 outline-none bg-white
+                         prose prose-neutral max-w-none
+                         [&_p]:my-2 [&_h1]:text-3xl [&_h2]:text-2xl
+                         [&_blockquote]:border-l-2 [&_blockquote]:border-gray-200 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600
+                         [&_pre]:bg-gray-50 [&_pre]:p-3 [&_pre]:rounded-lg
+                         [&_.todo]:list-none [&_.todo_li]:m-0"
+              contentEditable
+              suppressContentEditableWarning
+              onInput={handleEditorInput}
+              onKeyDown={handleKeyDown}
+              onClick={handleEditorClick}
+              aria-label="문서 에디터"
+              data-placeholder="여기에 내용을 입력하세요…"
+            />
+
+            {/* 에디터 placeholder */}
+            <style jsx>{`
+              [contenteditable][data-placeholder]:empty:before {
+                content: attr(data-placeholder);
+                color: #9ca3af;
+                pointer-events: none;
+              }
+            `}</style>
+
+            {/* 이미지 파일 입력(숨김) */}
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
           </div>
-
-          {/* 에디터 */}
-          <div
-            ref={editorRef}
-            className="mt-4 rounded-xl min-h-[58vh] p-5 outline-none bg-white
-                       prose prose-neutral max-w-none
-                       [&_p]:my-2 [&_h1]:text-3xl [&_h2]:text-2xl
-                       [&_blockquote]:border-l-2 [&_blockquote]:border-gray-200 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600
-                       [&_pre]:bg-gray-50 [&_pre]:p-3 [&_pre]:rounded-lg
-                       [&_.todo]:list-none [&_.todo_li]:m-0"
-            contentEditable
-            suppressContentEditableWarning
-            onInput={handleEditorInput}
-            onKeyDown={handleKeyDown}
-            onClick={handleEditorClick}
-            aria-label="문서 에디터"
-            data-placeholder="여기에 내용을 입력하세요…"
-          />
-
-          {/* 에디터 placeholder */}
-          <style jsx>{`
-            [contenteditable][data-placeholder]:empty:before {
-              content: attr(data-placeholder);
-              color: #9ca3af;
-              pointer-events: none;
-            }
-          `}</style>
-
-          {/* 이미지 파일 입력(숨김) */}
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
         </div>
+
+        {/* 우측 사이드 (필요 시 위젯) */}
+        <div className="min-h-[calc(100vh-64px)] w-full lg:w-[320px] relative" />
       </div>
 
-      {/* 우측: 현재는 비워둠 (미리보기는 모달에서만) */}
-      <div className="min-h-[calc(100vh-64px)] relative" />
-
-      {/* 하단 플로팅 배너 — Portal (문서작성 영역 중앙, 하단에서 조금 위) */}
+      {/* 하단 플로팅 배너 — Portal */}
       {mounted && bannerCenterX !== null &&
         createPortal(
           <div
             className="fixed z-[9999]"
-            style={{
-              left: `${bannerCenterX}px`,
-              transform: "translateX(-50%)",
-              bottom: "96px"
-            }}
+            style={{ left: `${bannerCenterX}px`, transform: "translateX(-50%)", bottom: "96px" }}
           >
             <button
               onClick={() => {
-                setPreviewHtmlSnap(currentHtml); // 스냅샷 고정
+                setPreviewHtmlSnap(currentHtml);
                 setPreviewOpen(true);
               }}
               className="shadow-xl rounded-full border bg-white/90 backdrop-blur px-4 py-2 text-sm flex items-center gap-2 hover:bg-white active:scale-[0.99] transition"
@@ -591,11 +667,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
       {mounted && previewOpen &&
         createPortal(
           <div className="fixed inset-0 z-[9998]">
-            <div
-              className="absolute inset-0 bg-black/40"
-              onClick={() => setPreviewOpen(false)}
-              aria-hidden="true"
-            />
+            <div className="absolute inset-0 bg-black/40" onClick={() => setPreviewOpen(false)} aria-hidden="true" />
             <div className="absolute inset-4 md:inset-8 bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-3 py-2 border-b bg-white/70 backdrop-blur">
                 <div className="text-sm text-gray-600">A4 미리보기</div>
@@ -658,15 +730,19 @@ function toDocHtml(blocks: Block[]) {
   return blockHtml(blocks);
 }
 function escapeHtml(str: string) {
-  return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // ✅ 오타 Fix: "&lt;/g," 잘못된 부분 수정
+  return (str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 function safeHtml(str: string) {
   return escapeHtml(str).replace(/\n/g, "<br>");
 }
 function closestBlock(node: HTMLElement | Node | null): HTMLElement | null {
   let el = node as HTMLElement | null;
-  while (el && el.nodeType === 3) el = el.parentElement;
-  while (el && !/^(P|DIV|LI|H1|H2|BLOCKQUOTE|PRE|UL|OL)$/.test(el.tagName)) el = el.parentElement;
+  while (el && (el as any).nodeType === 3) el = (el as any).parentElement;
+  while (el && !/^(P|DIV|LI|H1|H2|BLOCKQUOTE|PRE|UL|OL)$/.test((el as HTMLElement).tagName)) el = (el as any).parentElement;
   return el;
 }
 function isCaretAtStart(block: HTMLElement, sel: Selection) {
