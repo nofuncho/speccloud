@@ -9,10 +9,10 @@ import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { FolderType } from "@prisma/client";
 
-/* ---------- 로컬 서버액션: Prisma 직접 호출 (folderActions 경유 X) ---------- */
-/* 보안/권한검사는 필요시 추가하세요. 지금은 에러 픽스가 목적입니다. */
+/* ✅ DocumentCard (⋮ 메뉴 포함) */
+import DocumentCard from "./DocumentCard";
 
-/** 새 폴더 생성 */
+/* ---------- 로컬 서버액션 ---------- */
 export async function createFolderQuick(fd: FormData) {
   "use server";
   const parentId = String(fd.get("parentId") || "");
@@ -22,22 +22,19 @@ export async function createFolderQuick(fd: FormData) {
   const userId = session?.user?.id;
   if (!userId) throw new Error("로그인이 필요합니다.");
 
-  // 부모 존재 여부 확인
   const parent = await prisma.folder.findUnique({
     where: { id: parentId },
     select: { id: true },
   });
   if (!parent) throw new Error("부모 폴더를 찾을 수 없습니다.");
 
-  // ✅ 동일 부모(=relation) 내 중복 이름 방지: "새 폴더", "새 폴더 (2)", "새 폴더 (3)" ...
   const baseName = "새 폴더";
   const siblings = await prisma.folder.findMany({
-    where: { createdById: userId, parent: { is: { id: parentId } } }, // relation 조건
+    where: { createdById: userId, parent: { is: { id: parentId } } },
     select: { name: true },
   });
-  const taken = new Set(siblings.map(s => s.name));
+  const taken = new Set(siblings.map((s) => s.name));
 
-  // 최초 후보 계산
   let counter = 1;
   let candidate = baseName;
   if (taken.has(candidate)) {
@@ -46,15 +43,13 @@ export async function createFolderQuick(fd: FormData) {
     candidate = `${baseName} (${counter})`;
   }
 
-  // ✅ 레이스 컨디션 대비: P2002(유니크 충돌) 발생 시 숫자 한 단계 올려서 재시도
-  // 보통 1~2회면 해결됨
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       await prisma.folder.create({
         data: {
           name: candidate,
           type: FolderType.CUSTOM,
-          parent: { connect: { id: parentId } }, // relation connect
+          parent: { connect: { id: parentId } },
           createdBy: { connect: { id: userId } },
         },
       });
@@ -70,7 +65,6 @@ export async function createFolderQuick(fd: FormData) {
     }
   }
 
-  // 여기 왔다는 건 5회 모두 유니크 충돌 → 마지막으로 타임스탬프 suffix로 시도
   await prisma.folder.create({
     data: {
       name: `${baseName} (${Date.now() % 100000})`,
@@ -82,7 +76,6 @@ export async function createFolderQuick(fd: FormData) {
   revalidatePath("/app");
 }
 
-/** 새 문서 생성 (필수: content JSON + folder relation connect + createdBy) */
 export async function createDocumentQuick(fd: FormData) {
   "use server";
   const folderId = String(fd.get("folderId") || "");
@@ -99,11 +92,7 @@ export async function createDocumentQuick(fd: FormData) {
   });
   if (!folder) throw new Error("폴더를 찾을 수 없습니다.");
 
-  const initialContent = {
-    type: "doc",
-    version: 1,
-    blocks: [],
-  };
+  const initialContent = { type: "doc", version: 1, blocks: [] };
 
   await prisma.document.create({
     data: {
@@ -123,21 +112,6 @@ type DocStatus = "draft" | "final" | "verified";
 const STATUS_VALUES = ["draft", "final", "verified"] as const;
 const isDocStatus = (v: unknown): v is DocStatus =>
   typeof v === "string" && (STATUS_VALUES as readonly string[]).includes(v);
-
-const STATUS_LABEL_MAP: Record<DocStatus, string> = {
-  draft: "초안",
-  final: "최종",
-  verified: "검증",
-};
-
-const STATUS_CLASS_MAP: Record<DocStatus, string> = {
-  draft:
-    "inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700",
-  final:
-    "inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700",
-  verified:
-    "inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700",
-};
 
 function formatDateSafe(date: unknown) {
   if (!date) return "—";
@@ -234,7 +208,7 @@ function TagChip({
   );
 }
 
-/* ---------- 공용: +카드(이전 디자인) ---------- */
+/* ---------- 공용: +카드 ---------- */
 function AddCardForm({
   action,
   hidden,
@@ -285,7 +259,6 @@ export default async function FolderPane({ folderId }: { folderId: string | null
     folder.type === "ROOT_PORTFOLIO";
 
   const [children, documents] = await Promise.all([
-    // ❗ parentId 필드 대신 relation where 사용
     prisma.folder.findMany({
       where: { parent: { is: { id: safeFolderId } } },
       orderBy: { createdAt: "desc" },
@@ -333,12 +306,7 @@ export default async function FolderPane({ folderId }: { folderId: string | null
           </div>
 
           <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
-            {/* 좌측 상단: 새 폴더 */}
-            <AddCardForm
-              action={createFolderQuick}
-              hidden={{ parentId: safeFolderId }}
-              label="새 폴더"
-            />
+            <AddCardForm action={createFolderQuick} hidden={{ parentId: safeFolderId }} label="새 폴더" />
 
             {children.length === 0 ? (
               <li className="col-span-full rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
@@ -380,80 +348,28 @@ export default async function FolderPane({ folderId }: { folderId: string | null
           </div>
 
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch">
-            {/* 좌측 상단: 새 문서 */}
-            <AddCardForm
-              action={createDocumentQuick}
-              hidden={{ folderId: safeFolderId, title: "새 문서" }}
-              label="새 문서"
-            />
+            <AddCardForm action={createDocumentQuick} hidden={{ folderId: safeFolderId, title: "새 문서" }} label="새 문서" />
 
             {documents.length === 0 ? (
               <li className="col-span-full rounded-lg border border-dashed border-zinc-200 p-6 text-center text-zinc-400">
                 문서가 없습니다. 템플릿으로 생성해보세요.
               </li>
             ) : (
-              documents.map((d) => {
-                const company = d.company ?? "";
-                const role = d.role ?? "";
-                const raw = (d.status ?? "").toString();
-                const hasStatus = raw.length > 0;
-                const normalized: DocStatus | null = isDocStatus(raw) ? (raw as DocStatus) : null;
-
-                const statusLabel = normalized ? STATUS_LABEL_MAP[normalized] : "상태 없음";
-                const statusClass =
-                  normalized
-                    ? STATUS_CLASS_MAP[normalized]
-                    : "inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700";
-
-                return (
-                  <li key={d.id} className="h-full">
-                    <Link
-                      href={toApp({ folderId: safeFolderId, docId: d.id })}
-                      className="group block h-full rounded-xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-sky-200"
-                    >
-                      <div className="flex h-full flex-col">
-                        {/* 제목 + 상태 */}
-                        <div className="flex items-start justify-between gap-3">
-                          <h3 className="truncate text-[15px] font-semibold text-zinc-900 group-hover:text-sky-700">
-                            {d.title ?? "제목 없음"}
-                          </h3>
-                          <span className={statusClass}>
-                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                            {hasStatus ? statusLabel : "—"}
-                          </span>
-                        </div>
-
-                        {/* 메타(칩) */}
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {company && (
-                            <TagChip
-                              icon={<IconBuilding width={12} height={12} className="text-zinc-500" />}
-                              text={company}
-                            />
-                          )}
-                          {role && (
-                            <TagChip
-                              icon={<IconBriefcase width={12} height={12} className="text-zinc-500" />}
-                              text={role}
-                            />
-                          )}
-                          {!company && !role && (
-                            <span className="inline-flex h-8 items-center rounded-full border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[12px] text-zinc-400 leading-none">
-                              태그 추가
-                            </span>
-                          )}
-                        </div>
-
-                        {/* 수정일 */}
-                        <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-                          <span>수정일 {formatDateSafe(d.updatedAt)}</span>
-                          <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 transition group-hover:translate-x-0.5 group-hover:text-sky-500" />
-                        </div>
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })
+              documents.map((d) => (
+                <li key={d.id} className="h-full">
+                  <DocumentCard
+                    id={d.id}
+                    title={d.title ?? "제목 없음"}
+                    folderId={d.folderId}
+                    href={toApp({ folderId: safeFolderId, docId: d.id })}
+                    updatedAt={d.updatedAt}
+                    company={d.company}
+                    role={d.role}
+                    /* 상태칩 제거 위해 넘기지 않아도 됨 */
+                    status={null as any}
+                  />
+                </li>
+              ))
             )}
           </ul>
         </section>
