@@ -1,42 +1,43 @@
 {
   "compilerOptions": {
+    /* ---------- 기본 ---------- */
     "target": "ESNext",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": false,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+
+    /* ---------- JSON import / CommonJS 호환 ---------- */
     "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    /* ---------- Next.js / 모듈 ---------- */
     "module": "esnext",
     "moduleResolution": "node",
-    "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+
+    /* ---------- 경로 별칭 ---------- */
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     },
+
+    /* ---------- Next.js 전용 플러그인 ---------- */
     "plugins": [
-      {
-        "name": "next"
-      }
+      { "name": "next" }
     ]
   },
+
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+
+  "exclude": ["node_modules"]
 }

@@ -12,30 +12,33 @@ type Props = {
 
 export default function TagCombobox({ type, value, placeholder, onChange }: Props) {
   const [open, setOpen] = useState(false);
-  /** 입력 중 내부값 */
   const [q, setQ] = useState(value || "");
   const [items, setItems] = useState<string[]>([]);
   const boxRef = useRef<HTMLDivElement | null>(null);
-
-  // 디바운스 타이머(검색)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 바깥 클릭으로 닫힐 때 중복 커밋 방지
   const justCommittedRef = useRef(false);
 
   /** 아이콘 (디자인 통일) */
-  const Icon = useMemo(
-    () => (type === "company" ? "🏢" : "👤"),
-    [type]
-  );
+  const Icon = useMemo(() => (type === "company" ? "🏢" : "👤"), [type]);
 
   /** 외부값 바뀌면 입력값 동기화 */
   useEffect(() => {
     setQ(value || "");
   }, [value]);
 
-  /** 검색 API */
+  /** 검색 API (최근검색 병합 버전) */
   const fetchItems = async (keyword: string) => {
-    const url = `/api/lookup?type=${encodeURIComponent(type)}&q=${encodeURIComponent(keyword)}`;
+    // ✅ 로컬 최근값
+    let recent: string[] = [];
+    try {
+      const key = type === "company" ? "recent_companies" : "recent_roles";
+      recent = JSON.parse(localStorage.getItem(key) || "[]");
+    } catch {}
+
+    const url = `/api/lookup?type=${encodeURIComponent(type)}&q=${encodeURIComponent(
+      keyword
+    )}&recent=${encodeURIComponent(recent.join(","))}`;
+
     try {
       const res = await fetch(url);
       if (!res.ok) return;
@@ -46,7 +49,7 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
     }
   };
 
-  /** 디바운스 검색 (길이 0이면 추천/빈 리스트) */
+  /** 디바운스 검색 */
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
@@ -57,24 +60,26 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
     };
   }, [q, type]);
 
-  /** 커밋 유틸 (부모에 확정 전달) */
+  /** 커밋 (입력 확정 + 최근검색 저장) */
   const commit = (val: string) => {
     const next = val.trim();
-    // 현재 부모 값과 다를 때만 호출 (불필요한 저장 방지)
     if (next !== (value || "")) {
       onChange(next);
-      justCommittedRef.current = true; // 바깥클릭 close시 중복 커밋 방지
+      justCommittedRef.current = true;
+      try {
+        const key = type === "company" ? "recent_companies" : "recent_roles";
+        const arr = JSON.parse(localStorage.getItem(key) || "[]");
+        const nextArr = [next, ...arr.filter((x: string) => x !== next)].slice(0, 10);
+        localStorage.setItem(key, JSON.stringify(nextArr));
+      } catch {}
     }
   };
 
-  /** 바깥 클릭 시 닫고 필요하면 커밋 */
+  /** 바깥 클릭 시 닫기 */
   useEffect(() => {
     const handleDocClick = (e: MouseEvent) => {
       if (!boxRef.current) return;
-      const el = e.target as Node;
-      const inside = boxRef.current.contains(el);
-      if (!inside) {
-        // 바깥 클릭으로 닫힐 때, 입력값이 변경되어 있으면 커밋
+      if (!boxRef.current.contains(e.target as Node)) {
         if (!justCommittedRef.current && q.trim() !== (value || "")) {
           commit(q);
         }
@@ -86,22 +91,16 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
     return () => document.removeEventListener("mousedown", handleDocClick);
   }, [q, value]);
 
-  /** 키 입력 핸들링 */
+  /** 키보드 입력 처리 */
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    // IME 조합 중이면 Enter 무시
-    // @ts-expect-error: isComposing은 브라우저 nativeEvent에 존재
+    // @ts-expect-error isComposing은 nativeEvent에 존재
     if (e.nativeEvent.isComposing) return;
 
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       commit(q);
       setOpen(false);
-    } else if (e.key === "Tab") {
-      // 탭으로 포커스 이동할 때도 커밋
-      commit(q);
-      setOpen(false);
     } else if (e.key === "Escape") {
-      // 취소: 입력값을 부모값으로 되돌리고 닫기
       setQ(value || "");
       setOpen(false);
     }
@@ -127,8 +126,6 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
           }}
           onKeyDown={onInputKeyDown}
           onBlur={() => {
-            // input 자체 blur로 포커스 잃을 때도 커밋 (드롭다운 클릭은 mousedown에서 먼저 처리)
-            // 단, 바로 직전에 커밋된 것이면 중복 방지
             if (!justCommittedRef.current && q.trim() !== (value || "")) {
               commit(q);
             }
@@ -163,24 +160,30 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
             <div className="px-3 py-2 text-xs text-zinc-500">결과 없음</div>
           ) : (
             <ul className="max-h-60 overflow-auto">
-              {items.map((it) => (
-                <li key={it}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-zinc-50"
-                    onClick={() => {
-                      setQ(it);
-                      commit(it);
-                      setOpen(false);
-                    }}
-                    role="option"
-                    aria-selected={q === it}
-                  >
-                    <span className="text-zinc-400">{Icon}</span>
-                    <span className="truncate">{it}</span>
-                  </button>
-                </li>
-              ))}
+              {items.map((it) => {
+                const isRecent = it.startsWith("🔁 ");
+                const label = isRecent ? it.replace("🔁 ", "") : it;
+                return (
+                  <li key={it}>
+                    <button
+                      type="button"
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${
+                        isRecent ? "text-zinc-500" : "hover:bg-zinc-50"
+                      }`}
+                      onClick={() => {
+                        setQ(label);
+                        commit(label);
+                        setOpen(false);
+                      }}
+                      role="option"
+                      aria-selected={q === label}
+                    >
+                      <span className="text-zinc-400">{isRecent ? "🔁" : Icon}</span>
+                      <span className="truncate">{label}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
