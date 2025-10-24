@@ -24,21 +24,15 @@ async function assertFolderOwner(folderId: string, userId: string) {
   }
 }
 
-/** 문서 소유권 검증 + 필요한 필드 선택적으로 가져오기 */
-async function getOwnedDocument<T extends object>(
-  docId: string,
-  userId: string,
-  select: T
-) {
-  const doc = await prisma.document.findUnique({
-    where: { id: docId },
-    // @ts-ignore - Prisma select 제네릭 단순화를 위한 무시
-    select,
+/** 문서 소유권 검증: 존재 & 소유자 일치 확인만 수행 */
+async function ensureDocumentOwner(docId: string, userId: string) {
+  const ok = await prisma.document.findFirst({
+    where: { id: docId, createdById: userId },
+    select: { id: true },
   });
-  if (!doc || (doc as any).createdById !== userId) {
+  if (!ok) {
     throw new Error("문서에 대한 권한이 없습니다.");
   }
-  return doc as any as { createdById: string } & T;
 }
 
 /** ✅ 문서 생성 — 객체 인자 기반 */
@@ -82,7 +76,7 @@ export async function createDocumentAction(input: {
 export async function renameDocument(docId: string, title: string) {
   const userId = await getUserId();
 
-  await getOwnedDocument(docId, userId, { createdById: true });
+  await ensureDocumentOwner(docId, userId);
 
   return prisma.document.update({
     where: { id: docId },
@@ -94,7 +88,7 @@ export async function renameDocument(docId: string, title: string) {
 export async function saveDocumentJson(docId: string, content: any) {
   const userId = await getUserId();
 
-  await getOwnedDocument(docId, userId, { createdById: true });
+  await ensureDocumentOwner(docId, userId);
 
   return prisma.document.update({
     where: { id: docId },
@@ -126,12 +120,10 @@ async function buildCopyTitle(folderId: string, baseTitle: string) {
 export async function duplicateDocumentAction(docId: string) {
   const userId = await getUserId();
 
-  // 원본 조회 + 권한 검증
-  const src = await getOwnedDocument(
-    docId,
-    userId,
-    {
-      createdById: true,
+  // 원본 조회 (소유자 검증을 where에서 동시에 처리)
+  const src = await prisma.document.findFirst({
+    where: { id: docId, createdById: userId },
+    select: {
       id: true,
       folderId: true,
       title: true,
@@ -140,14 +132,18 @@ export async function duplicateDocumentAction(docId: string) {
       company: true,
       role: true,
       status: true,
-    }
-  );
+    },
+  });
 
-  const newTitle = await buildCopyTitle(src.folderId!, src.title ?? "제목 없음");
+  if (!src || !src.folderId) {
+    throw new Error("원본 문서 또는 폴더 정보를 찾을 수 없습니다.");
+  }
+
+  const newTitle = await buildCopyTitle(src.folderId, src.title ?? "제목 없음");
 
   const newDoc = await prisma.document.create({
     data: {
-      folderId: src.folderId!,
+      folderId: src.folderId,
       title: newTitle,
       content: src.content as any,
       templateKey: src.templateKey ?? null,
@@ -166,8 +162,7 @@ export async function duplicateDocumentAction(docId: string) {
 export async function deleteDocumentAction(docId: string) {
   const userId = await getUserId();
 
-  // 권한 검증
-  await getOwnedDocument(docId, userId, { createdById: true });
+  await ensureDocumentOwner(docId, userId);
 
   await prisma.document.delete({ where: { id: docId } });
 

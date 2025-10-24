@@ -1,4 +1,3 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,219 +7,106 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * ===========================
- * Auth (NextAuth + Credentials)
- * ===========================
- */
-model User {
-  id            String      @id @default(cuid())
-  name          String?
-  email         String       @unique
-  password      String       // Credentials Provider용 해시 저장
-  image         String?
-  emailVerified DateTime?
-
-  // NextAuth relations
-  accounts      Account[]
-  sessions      Session[]
-
-  // App relations
-  folders       Folder[]
-  documents     Document[]
-
-  // Onboarding / Profile (선택: 역참조)
-  profile       UserProfile?
-  experiences   Experience[]
-  projects      Project[]
-  certs         Certification[]
-  languages     LanguageSkill[]
-
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-}
-
-model Account {
-  id                String   @id @default(cuid())
+model account {
+  id                String  @id
   userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String?  @db.Text
-  access_token      String?  @db.Text
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String?  @db.Text
+  id_token          String? @db.Text
   session_state     String?
+  user              user    @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Account_userId_fkey")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
+  @@unique([provider, providerAccountId], map: "Account_provider_providerAccountId_key")
+  @@index([userId], map: "Account_userId_fkey")
 }
 
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-}
-
-/**
- * ===========================
- * App Models
- * ===========================
- */
-model Folder {
-  id          String      @id @default(cuid())
+model certification {
+  id          String   @id
+  createdById String
   name        String
-  type        FolderType
-  parentId    String?
-  parent      Folder?     @relation("FolderToChildren", fields: [parentId], references: [id])
-  children    Folder[]    @relation("FolderToChildren")
+  year        Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  user        user     @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "Certification_createdById_fkey")
 
-  // 소유자
-  createdById String
-  createdBy   User        @relation(fields: [createdById], references: [id], onDelete: Cascade)
-
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  // 관계
-  documents   Document[]
-
-  // 인덱스/유니크 (동일 부모 내 동일 이름 방지)
-  @@index([parentId])
-  @@index([type, createdAt])
-  @@index([createdById, parentId])
-  @@unique([createdById, parentId, name])
+  @@index([createdById, year], map: "Certification_createdById_year_idx")
 }
 
-enum FolderType {
-  ROOT_COVERLETTER
-  ROOT_RESUME
-  ROOT_PORTFOLIO
-  CUSTOM
-}
-
-model Document {
-  id          String    @id @default(cuid())
-
-  // 관계
+model document {
+  id          String   @id
   folderId    String
-  folder      Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
-
-  // 소유자
-  createdById String
-  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
-
-  // 기본 필드 (UI에서 사용)
   title       String
   content     Json
-
-  // 옵션 필드 (UI 테이블 컬럼)
+  templateKey String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
   company     String?
   role        String?
   status      String?
-  templateKey String?
+  user        user     @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "Document_createdById_fkey")
+  folder      folder   @relation(fields: [folderId], references: [id], onDelete: Cascade, map: "Document_folderId_fkey")
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@index([folderId])
-  @@index([updatedAt])
-  @@index([createdById, updatedAt])
+  @@index([createdById, updatedAt], map: "Document_createdById_updatedAt_idx")
+  @@index([folderId], map: "Document_folderId_idx")
+  @@index([updatedAt], map: "Document_updatedAt_idx")
 }
 
-model Template {
-  key        String   @id
-  label      String
-  category   TemplateCategory
-  schema     Json
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([category, isActive])
-}
-
-enum TemplateCategory {
-  COVERLETTER
-  RESUME
-  PORTFOLIO
-}
-
-/**
- * ===========================
- * Onboarding / Profile Models
- * ===========================
- * - MySQL: 원시 배열 불가 → Json 사용
- * - 경력/프로젝트 등은 User에 직접 종속(createdById)
- */
-model UserProfile {
-  id            String   @id @default(cuid())
-  createdById   String   @unique
-  createdBy     User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
-
-  // 기본 인적사항
-  name          String
-  email         String
-  phone         String?
-
-  // 학력
-  school        String?
-  major         String?
-  graduationY   Int?
-  gpa           Float?
-  gpaMax        Float?
-
-  // 관심/스킬 (원시 배열 → Json)
-  // 예: ["마케팅","데이터"], ["React","SQL"]
-  interests     Json?
-  skills        Json?
-
-  // 경력 여부/요약
-  isExperienced Boolean  @default(false)
-  totalYears    Float?
-  currentCompany String?
-  currentRole    String?
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-}
-
-model Experience {
-  id          String   @id @default(cuid())
+model experience {
+  id          String    @id
   createdById String
-  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
-
   company     String
   role        String
   startDate   DateTime
   endDate     DateTime?
   summary     String?
-
   createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  updatedAt   DateTime
+  user        user      @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "Experience_createdById_fkey")
 
-  @@index([createdById, startDate])
+  @@index([createdById, startDate], map: "Experience_createdById_startDate_idx")
 }
 
-model Project {
-  id          String    @id @default(cuid())
-  createdById String
-  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+model folder {
+  id           String      @id
+  name         String
+  type         folder_type
+  parentId     String?
+  createdById  String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime
+  document     document[]
+  user         user        @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "Folder_createdById_fkey")
+  folder       folder?     @relation("folderTofolder", fields: [parentId], references: [id], map: "Folder_parentId_fkey")
+  other_folder folder[]    @relation("folderTofolder")
 
+  @@unique([createdById, parentId, name], map: "Folder_createdById_parentId_name_key")
+  @@index([createdById, parentId], map: "Folder_createdById_parentId_idx")
+  @@index([parentId], map: "Folder_parentId_idx")
+  @@index([type, createdAt], map: "Folder_type_createdAt_idx")
+}
+
+model languageskill {
+  id          String   @id
+  createdById String
+  name        String
+  level       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  user        user     @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "LanguageSkill_createdById_fkey")
+
+  @@index([createdById, name], map: "LanguageSkill_createdById_name_idx")
+}
+
+model project {
+  id          String    @id
+  createdById String
   name        String
   role        String?
   startDate   DateTime?
@@ -228,40 +114,95 @@ model Project {
   problem     String?
   action      String?
   result      String?
-
-  // 원시 배열 불가 → Json (예: ["React","MySQL"])
   techStack   Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+  user        user      @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "Project_createdById_fkey")
 
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-
-  @@index([createdById, startDate])
+  @@index([createdById, startDate], map: "Project_createdById_startDate_idx")
 }
 
-model Certification {
-  id          String   @id @default(cuid())
-  createdById String
-  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+model session {
+  id           String   @id
+  sessionToken String   @unique(map: "Session_sessionToken_key")
+  userId       String
+  expires      DateTime
+  user         user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Session_userId_fkey")
 
-  name        String
-  year        Int?
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@index([createdById, year])
+  @@index([userId], map: "Session_userId_fkey")
 }
 
-model LanguageSkill {
-  id          String   @id @default(cuid())
-  createdById String
-  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+model template {
+  key       String            @id
+  label     String
+  category  template_category
+  schema    Json
+  isActive  Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime
 
-  name        String    // TOEIC, OPIc ...
-  level       String?   // 900, AL ...
+  @@index([category, isActive], map: "Template_category_isActive_idx")
+}
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+model user {
+  id            String          @id
+  name          String?
+  email         String          @unique(map: "User_email_key")
+  password      String
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime
+  account       account[]
+  certification certification[]
+  document      document[]
+  experience    experience[]
+  folder        folder[]
+  languageskill languageskill[]
+  project       project[]
+  session       session[]
+  userprofile   userprofile?
+}
 
-  @@index([createdById, name])
+model userprofile {
+  id             String   @id
+  createdById    String   @unique(map: "UserProfile_createdById_key")
+  name           String
+  email          String
+  phone          String?
+  school         String?
+  major          String?
+  graduationY    Int?
+  gpa            Float?
+  gpaMax         Float?
+  interests      Json?
+  skills         Json?
+  isExperienced  Boolean  @default(false)
+  totalYears     Float?
+  currentCompany String?
+  currentRole    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+  user           user     @relation(fields: [createdById], references: [id], onDelete: Cascade, map: "UserProfile_createdById_fkey")
+}
+
+model verificationtoken {
+  identifier String
+  token      String   @unique(map: "VerificationToken_token_key")
+  expires    DateTime
+
+  @@unique([identifier, token], map: "VerificationToken_identifier_token_key")
+}
+
+enum folder_type {
+  ROOT_COVERLETTER
+  ROOT_RESUME
+  ROOT_PORTFOLIO
+  CUSTOM
+}
+
+enum template_category {
+  COVERLETTER
+  RESUME
+  PORTFOLIO
 }

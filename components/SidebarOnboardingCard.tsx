@@ -1,18 +1,13 @@
+// components/SidebarOnboardingCard.tsx
 "use client";
 
-import { useRouter } from "next/navigation";
-import OnboardingBanner from "@/components/OnboardingBanner";
+import OnboardingBanner from "./OnboardingBanner";
 
-/** 사이드바 상단 온보딩 배너(클라이언트 섬) */
-export default function SidebarOnboardingCard({ imageSrc = "/chaltteok.png" }: { imageSrc?: string }) {
-  const router = useRouter();
+export default function SidebarOnboardingCard() {
+  // 바깥 카드 스타일 제거: border/rounded/shadow/padding 모두 X
   return (
-    <OnboardingBanner
-      imageSrc={imageSrc}
-      onSetupClick={() => router.push("/onboarding/setup")}
-      onAiGuideClick={() => router.push("/onboarding/ai")}
-      onScoreClick={() => router.push("/onboarding/score")}
-      // doneBanner 를 커스터마이즈하고 싶으면 여기서 넣으면 됨
-    />
+    <div className="mt-2">
+      <OnboardingBanner />
+    </div>
   );
 }

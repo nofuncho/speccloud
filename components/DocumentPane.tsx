@@ -167,13 +167,15 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [doc]
   );
 
+  /* 🔧 변경점: cleanup에서 ref 스냅샷 사용 (경고 해소) */
   useEffect(() => {
+    const timersSnapshot = metaTimersRef.current; // 스냅샷 캡처
     return () => {
-      const t = metaTimersRef.current;
-      if (t.company) clearTimeout(t.company);
-      if (t.role) clearTimeout(t.role);
+      if (timersSnapshot.company) clearTimeout(timersSnapshot.company);
+      if (timersSnapshot.role) clearTimeout(timersSnapshot.role);
     };
-  }, []);
+    // 문서가 바뀔 때마다 스냅샷을 새로 잡고 이전 타이머 정리
+  }, [doc?.id]);
 
   /* 문서 로드 */
   useEffect(() => {

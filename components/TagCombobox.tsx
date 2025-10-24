@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, KeyboardEvent, useCallback } from "react";
 
 type Props = {
   type: "company" | "role";
@@ -15,7 +15,6 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
   const [q, setQ] = useState(value || "");
   const [items, setItems] = useState<string[]>([]);
   const boxRef = useRef<HTMLDivElement | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const justCommittedRef = useRef(false);
 
   /** 아이콘 (디자인 통일) */
@@ -26,39 +25,39 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
     setQ(value || "");
   }, [value]);
 
-  /** 검색 API (최근검색 병합 버전) */
-  const fetchItems = async (keyword: string) => {
-    // ✅ 로컬 최근값
-    let recent: string[] = [];
-    try {
-      const key = type === "company" ? "recent_companies" : "recent_roles";
-      recent = JSON.parse(localStorage.getItem(key) || "[]");
-    } catch {}
+  /** 검색 API (최근검색 병합 버전) — useCallback으로 메모이즈 */
+  const fetchItems = useCallback(
+    async (keyword: string) => {
+      // ✅ 로컬 최근값
+      let recent: string[] = [];
+      try {
+        const key = type === "company" ? "recent_companies" : "recent_roles";
+        recent = JSON.parse(localStorage.getItem(key) || "[]");
+      } catch {}
 
-    const url = `/api/lookup?type=${encodeURIComponent(type)}&q=${encodeURIComponent(
-      keyword
-    )}&recent=${encodeURIComponent(recent.join(","))}`;
+      const url = `/api/lookup?type=${encodeURIComponent(type)}&q=${encodeURIComponent(
+        keyword
+      )}&recent=${encodeURIComponent(recent.join(","))}`;
 
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data: { results: string[] } = await res.json();
-      setItems(Array.isArray(data.results) ? data.results : []);
-    } catch {
-      // 무시 (네트워크 에러 등)
-    }
-  };
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data: { results: string[] } = await res.json();
+        setItems(Array.isArray(data.results) ? data.results : []);
+      } catch {
+        // 무시 (네트워크 에러 등)
+      }
+    },
+    [type]
+  );
 
-  /** 디바운스 검색 */
+  /** 디바운스 검색 — 의존성에 fetchItems 포함 (경고 해소) */
   useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
+    const t = setTimeout(() => {
       void fetchItems(q);
     }, 180);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [q, type]);
+    return () => clearTimeout(t);
+  }, [q, fetchItems]);
 
   /** 커밋 (입력 확정 + 최근검색 저장) */
   const commit = (val: string) => {

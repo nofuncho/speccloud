@@ -1,127 +1,133 @@
+// components/OnboardingBanner.tsx
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import OnboardingModal from "./OnboardingModal";
+import OnboardingChat from "./OnboardingChat";
 
-type StepKey = "setup" | "ai" | "score" | "done";
-const STORAGE_KEY = "speccloud.onboarding.v1";
+const K1 = "ob_step1_done";
+const K2 = "ob_step2_done";
+const K3 = "ob_step3_done";
 
-// (다른 화면에서 단계 완료 시 호출)
-export function markOnboardingStepDone(step: Exclude<StepKey, "done">) {
-  const order: Exclude<StepKey, "done">[] = ["setup", "ai", "score"];
-  const saved = (typeof window !== "undefined"
-    ? (localStorage.getItem(STORAGE_KEY) as StepKey | null)
-    : null) ?? "setup";
-  if (saved === "done") return;
-  const curIdx = order.indexOf(saved as any);
-  const doneIdx = order.indexOf(step);
-  const nextIdx = Math.max(curIdx, doneIdx) + 1;
-  const next: StepKey = nextIdx >= order.length ? "done" : order[nextIdx];
-  localStorage.setItem(STORAGE_KEY, next);
-  window.dispatchEvent(new CustomEvent("onboarding:changed", { detail: next }));
-}
+type StepId = 1 | 2 | 3;
 
-type Props = {
-  onSetupClick?: () => void;   // 기초세팅 버튼
-  onAiGuideClick?: () => void; // AI 사용법 버튼
-  onScoreClick?: () => void;   // 점수 측정 버튼
-  doneBanner?: React.ReactNode; // 온보딩 끝나면 노출될 일반 배너
-  imageSrc?: string;            // 기본: /chaltteok.png
-};
-
-export default function OnboardingBanner({
-  onSetupClick,
-  onAiGuideClick,
-  onScoreClick,
-  doneBanner,
-  imageSrc = "/chaltteok.png",
-}: Props) {
-  const [step, setStep] = useState<StepKey>("setup");
+export default function OnboardingBanner() {
+  const [done, setDone] = useState<{ 1: boolean; 2: boolean; 3: boolean }>({ 1: false, 2: false, 3: false });
+  const [activeStep, setActiveStep] = useState<StepId | null>(null);
 
   useEffect(() => {
-    const saved = (localStorage.getItem(STORAGE_KEY) as StepKey | null) ?? "setup";
-    setStep(saved);
-    const handler = (e: any) => setStep(e.detail as StepKey);
-    window.addEventListener("onboarding:changed", handler);
-    return () => window.removeEventListener("onboarding:changed", handler);
+    setDone({
+      1: localStorage.getItem(K1) === "1",
+      2: localStorage.getItem(K2) === "1",
+      3: localStorage.getItem(K3) === "1",
+    });
   }, []);
 
-  const content = useMemo(() => {
-    if (step === "done") {
-      return (
-        doneBanner ?? (
-          <div className="flex items-center gap-3">
-            <Image src={imageSrc} alt="" width={44} height={44} className="rounded-full" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-800">이제 본격적으로 시작!</p>
-              <p className="text-xs text-gray-500 truncate">새 문서를 만들거나 업로드해보세요.</p>
+  const currentStep: StepId = useMemo(() => {
+    if (!done[1]) return 1;
+    if (!done[2]) return 2;
+    if (!done[3]) return 3;
+    return 3;
+  }, [done]);
+
+  const openStep = (id: StepId) => setActiveStep(id);
+  const close = () => setActiveStep(null);
+  const markDone = (id: StepId) => {
+    const map = { 1: K1, 2: K2, 3: K3 } as const;
+    localStorage.setItem(map[id], "1");
+    setDone(prev => ({ ...prev, [id]: true }));
+  };
+
+  return (
+    <>
+      {/* 💡 작은 사이즈 배너 */}
+      <div
+        onClick={() => openStep(currentStep)}
+        className="relative cursor-pointer rounded-[14px] bg-[#F3F7FF] pl-4 pr-3 py-5 overflow-hidden"
+        style={{ minHeight: 90 }}
+      >
+        <div className="flex items-center">
+          {/* 텍스트 */}
+          <div className="flex-1 pr-[70px]">
+            <div className="text-[15px] sm:text-[16px] leading-[1.3] font-extrabold tracking-[-0.01em] text-gray-900">
+              찰떡이와 함께<br />쉽게 기초 세팅 시작
             </div>
+            <div className="mt-[4px] text-[12px] text-[#6B7280]">
+              AI 기능들을 위해 필요해요
+            </div>
+
+            {/* 게이지 (소형)
+            <div className="mt-2 flex items-center gap-[6px]">
+            <div className="h-[6px] w-[20px] rounded-full bg-gradient-to-r from-[#3B82F6] to-[#60A5FA]" />
+            <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
+            <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
+            </div>
+            */}
           </div>
-        )
-      );
-    }
 
-    const map = {
-      setup: {
-        title: "빠른 기초 세팅",
-        desc: "루트/예시 템플릿/샘플 문서 준비",
-        cta: "기초세팅 시작",
-        onClick: onSetupClick,
-      },
-      ai: {
-        title: "AI 사용법 가이드",
-        desc: "JD 붙여넣기, 리라이팅 체험",
-        cta: "AI 가이드 열기",
-        onClick: onAiGuideClick,
-      },
-      score: {
-        title: "스펙 점수 측정",
-        desc: "작성 문서 기반 점수 계산",
-        cta: "점수 측정하기",
-        onClick: onScoreClick,
-      },
-    } as const;
+          {/* 캐릭터 */}
+            <Image
+            src="/onboarding/character.png"
+            alt="AI 찰떡 캐릭터"
+            width={80}
+            height={80}
+            className="absolute right-2 top-1/2 -translate-y-1/2"
+            priority
+            />
+        </div>
+      </div>
 
-    const item = map[step];
-    return (
-      <>
-        <div className="flex items-center gap-3">
-          <Image src={imageSrc} alt="" width={44} height={44} className="rounded-full" />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-800">{item.title}</p>
-            <p className="text-xs text-gray-500 truncate">{item.desc}</p>
+      {/* 단계별 모달 */}
+      <OnboardingModal open={activeStep === 1} onClose={close} title="기초세팅 (채팅)">
+        <div className="px-4 pt-3">
+          <p className="text-[13px] text-gray-500">
+            입력한 내용으로 자기소개서/이력서/프로젝트 초안을 자동으로 채워드려요.
+          </p>
+        </div>
+        <div className="p-4">
+          <div className="h-[500px]">
+            <OnboardingChat
+              onFinished={() => {
+                markDone(1);
+                close();
+              }}
+            />
           </div>
         </div>
-        <button
-          onClick={item.onClick}
-          className="mt-3 w-full rounded-md bg-blue-500 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600"
-        >
-          {item.cta}
-        </button>
-        <div className="mt-3 flex items-center gap-1">
-          {["setup", "ai", "score"].map((k) => {
-            const active =
-              (step === "setup" && k === "setup") ||
-              (step === "ai" && k === "ai") ||
-              (step === "score" && k === "score");
-            const done =
-              step === "done" ||
-              (step === "ai" && k === "setup") ||
-              (step === "score" && (k === "setup" || k === "ai"));
-            return (
-              <span
-                key={k}
-                className={[
-                  "h-1.5 w-full rounded-full",
-                  done ? "bg-blue-500" : active ? "bg-blue-300" : "bg-gray-200",
-                ].join(" ")}
-              />
-            );
-          })}
-        </div>
-      </>
-    );
-  }, [step, doneBanner, imageSrc, onSetupClick, onAiGuideClick, onScoreClick]);
+      </OnboardingModal>
 
-  return <aside className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">{content}</aside>;
+      <OnboardingModal open={activeStep === 2} onClose={close} title="AI 사용법 (준비 중)">
+        <div className="p-4">
+          <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-600">
+            곧 제공됩니다. 에디터에서 AI를 잘 쓰는 방법과 프롬프트 모음이 들어올 예정이에요.
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => { markDone(2); close(); }}
+              className="rounded-lg bg-gray-900 px-3 py-1 text-xs font-semibold text-white hover:bg-black"
+            >
+              임시로 완료 처리
+            </button>
+          </div>
+        </div>
+      </OnboardingModal>
+
+      <OnboardingModal open={activeStep === 3} onClose={close} title="점수 측정 (준비 중)">
+        <div className="p-4">
+          <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-600">
+            곧 제공됩니다. 문서 품질 점수와 개선 포인트를 확인할 수 있어요.
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => { markDone(3); close(); }}
+              className="rounded-lg bg-gray-900 px-3 py-1 text-xs font-semibold text-white hover:bg-black"
+            >
+              임시로 완료 처리
+            </button>
+          </div>
+        </div>
+      </OnboardingModal>
+    </>
+  );
 }
