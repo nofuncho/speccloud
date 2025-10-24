@@ -59,6 +59,16 @@ function isStale(d: Date | null | undefined, days = BRIEF_TTL_DAYS) {
 }
 
 /** =========================
+ *  서버에서 절대 URL 베이스 결정
+ *  - NEWS_API_ENDPOINT 가 '/api/news' 같은 상대경로여도 안전하게 동작
+ *  ========================= */
+function getBaseUrl() {
+  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL; // 예: https://speccloud.app
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;        // 예: https://your-app.vercel.app
+  return "http://localhost:3000"; // 로컬 개발 기본값
+}
+
+/** =========================
  *  (옵션) 실시간 뉴스 조회
  *  - 키 없으면 빈 배열 반환
  *  - 사용하는 외부 뉴스 API 응답 구조에 맞춰 아래 매핑만 조정
@@ -66,12 +76,22 @@ function isStale(d: Date | null | undefined, days = BRIEF_TTL_DAYS) {
 async function fetchCompanyNews(company: string): Promise<BriefNews[]> {
   if (!NEWS_API_ENDPOINT || !NEWS_API_KEY) return [];
   try {
-    const url = `${NEWS_API_ENDPOINT}?q=${encodeURIComponent(company)}&count=5`;
+    const base = NEWS_API_ENDPOINT.startsWith("http") ? "" : getBaseUrl();
+    const url = `${base}${NEWS_API_ENDPOINT}?q=${encodeURIComponent(company)}&count=5`;
+
+    // 디버그 로그 (필요 시 확인)
+    // console.log("[news] request", { url });
+
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${NEWS_API_KEY}` },
+      cache: "no-store",
       // next: { revalidate: 10800 } // 필요 시 캐시
     });
-    if (!res.ok) return [];
+
+    if (!res.ok) {
+      console.error("[news] provider not ok", res.status);
+      return [];
+    }
     const data = await res.json();
     const items = (data?.articles || data?.value || data?.items || []) as any[];
     return items
@@ -83,7 +103,8 @@ async function fetchCompanyNews(company: string): Promise<BriefNews[]> {
         date: it.publishedAt ?? it.datePublished ?? it.pubDate,
       }))
       .filter((n) => n.title);
-  } catch {
+  } catch (e) {
+    console.error("[news] fetch error", e);
     return [];
   }
 }
