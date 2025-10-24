@@ -11,6 +11,9 @@ import { regenerateDocument } from "@/app/actions/regenerateActions";
 import TagCombobox from "@/components/TagCombobox";
 import { updateDocumentMeta } from "@/app/actions/documentMeta";
 
+/* ✅ AI 패널 */
+import DocAiPanel from "@/components/DocAiPanel";
+
 /* ---------- A4 미리보기 ---------- */
 const A4Preview = dynamic(() => import("@/components/A4Preview"), { ssr: false, loading: () => null });
 
@@ -167,14 +170,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [doc]
   );
 
-  /* 🔧 변경점: cleanup에서 ref 스냅샷 사용 (경고 해소) */
+  /* 🔧 cleanup에서 ref 스냅샷 사용 (경고 해소) */
   useEffect(() => {
     const timersSnapshot = metaTimersRef.current; // 스냅샷 캡처
     return () => {
       if (timersSnapshot.company) clearTimeout(timersSnapshot.company);
       if (timersSnapshot.role) clearTimeout(timersSnapshot.role);
     };
-    // 문서가 바뀔 때마다 스냅샷을 새로 잡고 이전 타이머 정리
   }, [doc?.id]);
 
   /* 문서 로드 */
@@ -572,6 +574,29 @@ export default function DocumentPane({ docId }: { docId: string }) {
     });
   }, []);
 
+  /* ✅ AI 패널 연결: 선택영역 텍스트 추출 & 대체 삽입 (+ 치환) */
+  const getSelectionHtml = useCallback(() => {
+    return window.getSelection()?.toString() ?? "";
+  }, []);
+
+  const replaceSelection = useCallback((text: string) => {
+    // 1) 치환 컨텍스트 (회사/포지션 태그 기준)
+    const ctx = {
+      company: (companyTag || "").trim(),
+      role: (roleTag || "").trim(),
+    };
+    // 2) {{company}}, {{role}} 치환
+    const filled = fillPlaceholders(text, ctx);
+
+    // 3) 플레인 텍스트 삽입 (출력 오염 방지)
+    document.execCommand("insertText", false, filled);
+
+    // 상태 동기화
+    isFromEditorRef.current = true;
+    setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+    editorRef.current?.focus();
+  }, [companyTag, roleTag]);
+
   /* 로딩/에러 */
   if (loading) return <div className="p-6 text-gray-500">문서 불러오는 중...</div>;
   if (err) return <div className="p-6 text-red-600">{err}</div>;
@@ -715,8 +740,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
           </div>
         </div>
 
-        {/* 우측 사이드 (필요 시 위젯) */}
-        <div className="min-h-[calc(100vh-64px)] w-full lg:w-[320px] relative" />
+        {/* 우측 사이드 — ✅ AI 패널 장착 */}
+        <div className="min-h-[calc(100vh-64px)] w-full lg:w-[320px] relative border-l bg-white">
+          <DocAiPanel
+            getSelectionHtml={getSelectionHtml}
+            replaceSelection={replaceSelection}
+          />
+        </div>
       </div>
 
       {/* 하단 플로팅 배너 — Portal */}
@@ -850,4 +880,9 @@ function insertHtmlAtCaret(html: string, editorRef: React.RefObject<HTMLDivEleme
   while ((node = el.firstChild)) frag.appendChild(node);
   range.insertNode(frag);
   sel.collapseToEnd();
+}
+
+/* ✅ 플레이스홀더 치환 유틸 */
+function fillPlaceholders(s: string, ctx: Record<string, string>) {
+  return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (ctx[k] ?? ""));
 }

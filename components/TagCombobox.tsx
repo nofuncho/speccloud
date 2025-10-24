@@ -92,7 +92,7 @@ export default function TagCombobox({ type, value, placeholder, onChange }: Prop
 
   /** 키보드 입력 처리 */
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    // @ts-expect-error isComposing은 nativeEvent에 존재
+    // @ts-expect-error isComposing은 nativeEvent에 존재/
     if (e.nativeEvent.isComposing) return;
 
     if (e.key === "Enter" || e.key === "Tab") {
