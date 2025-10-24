@@ -6,14 +6,16 @@ import { runAi } from "@/app/actions/aiActions";
 import {
   fetchCompanyBrief,
   listRecentCompanyBriefs,
+  refreshCompanyBrief, // ✅ 강제 재생성 API 추가 임포트
   type CompanyBrief,
 } from "@/app/actions/companyBrief";
 
 /**
- * 문서 편집기 우측 AI 패널
- * - 회사/포지션 선택 시 회사 브리프 자동 표시 (DB 캐시)
+ * 문서 편집기 우측 AI 패널 (확장판)
+ * - 회사/포지션 선택 시 회사 브리프 자동 표시 (DB 캐시 + 확장 섹션 + 뉴스 병합)
  * - 최근 회사 요약 목록 제공
  * - 선택 텍스트를 회사 컨텍스트와 함께 AI로 처리
+ * - 문서에 텍스트/리치(HTML) 삽입 버튼 제공
  */
 export default function DocAiPanel({
   company,
@@ -24,7 +26,7 @@ export default function DocAiPanel({
   company?: string;
   role?: string;
   getSelectionHtml: () => string;
-  replaceSelection: (text: string) => void;
+  replaceSelection: (text: string) => void; // 텍스트 치환(기존 방식)
 }) {
   const [mode, setMode] = useState<AiMode>("proofread");
   const [tone, setTone] = useState("차분하고 전문적");
@@ -92,10 +94,31 @@ export default function DocAiPanel({
   /** 회사 브리프 텍스트 (AI 프롬프트 컨텍스트용) */
   const briefText = useMemo(() => {
     if (!brief) return "";
-    const bullets = (brief.bullets ?? [])
-      .map((b) => (b.startsWith("•") ? b : `• ${b}`))
-      .join("\n");
-    return `${brief.blurb}\n${bullets}`;
+    const lines: string[] = [];
+
+    // 기본 요약
+    if (brief.blurb?.trim()) lines.push(brief.blurb.trim());
+    const bullets = (brief.bullets ?? []).map((b) => (b.startsWith("•") ? b : `• ${b}`));
+    if (bullets.length) lines.push(bullets.join("\n"));
+
+    // 확장 섹션
+    if (brief.values?.length) lines.push(`\n[핵심 가치]\n${brief.values.map(prefixDot).join("\n")}`);
+    if (brief.hiringFocus?.length)
+      lines.push(`\n[채용 포인트]\n${brief.hiringFocus.map(prefixDot).join("\n")}`);
+    if (brief.resumeTips?.length)
+      lines.push(`\n[서류 팁]\n${brief.resumeTips.map(prefixDash).join("\n")}`);
+    if (brief.interviewTips?.length)
+      lines.push(`\n[면접 팁]\n${brief.interviewTips.map(prefixDash).join("\n")}`);
+
+    // 최근 뉴스 제목만
+    if (brief.recent?.length) {
+      const newsHeads = brief.recent
+        .slice(0, 5)
+        .map((n) => `• ${n.title}${n.source ? ` (${n.source})` : ""}${n.date ? ` - ${formatDate(n.date)}` : ""}`);
+      if (newsHeads.length) lines.push(`\n[최근 뉴스]\n${newsHeads.join("\n")}`);
+    }
+
+    return lines.join("\n").trim();
   }, [brief]);
 
   /** AI 실행 */
@@ -126,12 +149,43 @@ export default function DocAiPanel({
     }
   };
 
-  /** 결과 적용 */
+  /** 결과 적용(텍스트 치환) */
   const onApply = () => {
     if (!preview.trim()) return;
     replaceSelection(preview);
     setPreview("");
   };
+
+  /** 내부 HTML 삽입 도우미(리치 블록) */
+  const insertHtmlLocal = (html: string) => {
+    try {
+      // contentEditable 기반 에디터에서 동작 (TipTap 등에서도 대부분 수용)
+      document.execCommand("insertHTML", false, html);
+    } catch {
+      // 실패 시 텍스트로 폴백
+      replaceSelection(stripHtml(html));
+    }
+  };
+
+  /** 회사 브리프 리치 블록 HTML */
+  const briefHtml = useMemo(() => {
+    if (!brief) return "";
+    const vals = renderList("핵심 가치", brief.values);
+    const hire = renderList("채용에서 중요하게 보는 포인트", brief.hiringFocus);
+    const resume = renderList("서류 합격 Tip", brief.resumeTips);
+    const inter = renderList("면접 Tip", brief.interviewTips);
+    const news = renderNews("최근 이슈 / 뉴스", brief.recent);
+
+    return `
+<section class="rounded-xl border bg-white p-4 my-4">
+  <h3 class="font-bold text-[15px] mb-2">🏢 회사 브리프 — ${escapeHtml(brief.company)}${brief.role ? ` / ${escapeHtml(brief.role)}` : ""}</h3>
+  <p class="text-[13px] text-gray-700 mb-2">${escapeHtml(brief.blurb)}</p>
+  ${vals}${hire}${resume}${inter}${news}
+  <div class="mt-2 text-[11px] text-gray-400">업데이트: ${escapeHtml(
+    new Date(brief.updatedAt).toLocaleDateString()
+  )}</div>
+</section>`.trim();
+  }, [brief]);
 
   return (
     <aside className="w-80 shrink-0 border-l bg-white flex flex-col">
@@ -165,20 +219,82 @@ export default function DocAiPanel({
               {brief.company}
               {brief.role ? ` · ${brief.role}` : ""}
             </div>
+
+            {/* 핵심 요약 */}
             <div className="text-gray-600">{brief.blurb}</div>
-            <ul className="list-disc pl-4 space-y-1">
-              {brief.bullets.slice(0, 5).map((b, i) => (
-                <li key={i} className="leading-snug">
-                  {b.replace(/^•\s?/, "")}
-                </li>
-              ))}
-            </ul>
-            <div className="flex gap-2 mt-1">
+
+            {/* bullets (요약) */}
+            {brief.bullets?.length ? (
+              <ul className="list-disc pl-4 space-y-1">
+                {brief.bullets.slice(0, 5).map((b, i) => (
+                  <li key={i} className="leading-snug">
+                    {b.replace(/^•\s?/, "")}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            {/* 확장 섹션 요약 프리뷰 */}
+            {brief.values?.length ? (
+              <SectionPreview title="핵심 가치" items={brief.values} />
+            ) : null}
+            {brief.hiringFocus?.length ? (
+              <SectionPreview title="채용 포인트" items={brief.hiringFocus} />
+            ) : null}
+            {brief.resumeTips?.length ? (
+              <SectionPreview title="서류 팁" items={brief.resumeTips} />
+            ) : null}
+            {brief.interviewTips?.length ? (
+              <SectionPreview title="면접 팁" items={brief.interviewTips} />
+            ) : null}
+
+            {/* 최근 뉴스 */}
+            {brief.recent?.length ? (
+              <div>
+                <div className="font-semibold mt-1">최근 뉴스</div>
+                <ul className="list-disc pl-4 space-y-1">
+                  {brief.recent.slice(0, 5).map((n, i) => (
+                    <li key={i} className="leading-snug">
+                      {n.url ? (
+                        <a
+                          href={n.url}
+                          target="_blank"
+                          className="underline"
+                          rel="noreferrer"
+                          title={n.source || ""}
+                        >
+                          {n.title}
+                        </a>
+                      ) : (
+                        n.title
+                      )}
+                      {(n.source || n.date) && (
+                        <span className="text-[11px] text-gray-500 ml-1">
+                          {n.source ? `· ${n.source}` : ""} {n.date ? `· ${formatDate(n.date)}` : ""}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {/* 액션 */}
+            <div className="flex flex-wrap gap-2 mt-1">
               <button
                 className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
-                onClick={() => replaceSelection(`${brief.blurb}\n${brief.bullets.join("\n")}`)}
+                onClick={() => replaceSelection(buildPlainBlock(brief))}
               >
-                문서에 삽입
+                문서에 삽입(텍스트)
+              </button>
+              <button
+                className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                onClick={() => {
+                  if (!briefHtml) return;
+                  insertHtmlLocal(briefHtml);
+                }}
+              >
+                문서에 삽입(리치)
               </button>
               <button
                 className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
@@ -195,6 +311,24 @@ export default function DocAiPanel({
               >
                 새로고침
               </button>
+
+              {/* ✅ 강제 재생성 버튼 (캐시 무시) */}
+              <button
+                className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                onClick={async () => {
+                  if (!company) return;
+                  setBriefLoading(true);
+                  try {
+                    const data = await refreshCompanyBrief(company, role); // ✅ 캐시 무시하고 즉시 재생성
+                    setBrief(data);
+                  } finally {
+                    setBriefLoading(false);
+                  }
+                }}
+              >
+                강제 재생성
+              </button>
+
               <span className="text-[10px] text-gray-400 self-center">
                 {new Date(brief.updatedAt).toLocaleDateString()} 기준
               </span>
@@ -221,11 +355,7 @@ export default function DocAiPanel({
                 key={idx}
                 className="text-[11px] px-2 py-1 rounded-full border bg-white hover:bg-gray-50"
                 title={r.blurb}
-                onClick={() =>
-                  replaceSelection(
-                    `${r.company}${r.role ? ` · ${r.role}` : ""}\n${r.blurb}\n${r.bullets.join("\n")}`
-                  )
-                }
+                onClick={() => replaceSelection(buildPlainBlock(r))}
               >
                 {r.company}
                 {r.role ? `·${r.role}` : ""}
@@ -300,4 +430,118 @@ export default function DocAiPanel({
       )}
     </aside>
   );
+}
+
+/* =========================
+ * 소형 프레젠터/유틸
+ * ========================= */
+
+function SectionPreview({ title, items }: { title: string; items?: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div>
+      <div className="font-semibold">{title}</div>
+      <ul className="list-disc pl-4 space-y-1">
+        {items.slice(0, 4).map((t, i) => (
+          <li key={i} className="leading-snug">
+            {t}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function buildPlainBlock(b: CompanyBrief): string {
+  const lines: string[] = [];
+  lines.push(`🏢 회사 브리프 — ${b.company}${b.role ? ` / ${b.role}` : ""}`);
+  lines.push(b.blurb);
+
+  const pushList = (label: string, arr?: string[]) => {
+    if (!arr || arr.length === 0) return;
+    lines.push(`\n${label}`);
+    arr.forEach((x) => lines.push(prefixDot(x)));
+  };
+
+  // 기본 bullets
+  if (b.bullets?.length) {
+    lines.push("\n핵심 요약");
+    b.bullets.forEach((x) => lines.push(x.startsWith("•") ? x : `• ${x}`));
+  }
+
+  // 확장
+  pushList("핵심 가치", b.values);
+  pushList("채용 포인트", b.hiringFocus);
+  pushList("서류 팁", b.resumeTips);
+  pushList("면접 팁", b.interviewTips);
+
+  // 뉴스
+  if (b.recent?.length) {
+    lines.push("\n최근 뉴스");
+    b.recent.slice(0, 5).forEach((n) => {
+      const meta = [n.source, formatDate(n.date)].filter(Boolean).join(" · ");
+      lines.push(`• ${n.title}${meta ? ` (${meta})` : ""}${n.url ? ` <${n.url}>` : ""}`);
+    });
+  }
+
+  lines.push(`\n업데이트: ${new Date(b.updatedAt).toLocaleDateString()}`);
+
+  return lines.join("\n").trim();
+}
+
+function renderList(title: string, arr?: string[]) {
+  if (!arr || arr.length === 0) return "";
+  const lis = arr.map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+  return `
+  <div class="mt-2">
+    <div class="font-semibold mb-1">${escapeHtml(title)}</div>
+    <ul class="list-disc pl-5 space-y-1">${lis}</ul>
+  </div>`.trim();
+}
+
+function renderNews(
+  title: string,
+  arr?: { title: string; url?: string; source?: string; date?: string }[]
+) {
+  if (!arr || arr.length === 0) return "";
+  const lis = arr
+    .slice(0, 6)
+    .map((n) => {
+      const main = n.url
+        ? `<a href="${escapeAttr(n.url)}" target="_blank" class="underline">${escapeHtml(n.title)}</a>`
+        : escapeHtml(n.title);
+      const meta = [n.source, formatDate(n.date)].filter(Boolean).map(escapeHtml).join(" · ");
+      return `<li>${main}${meta ? ` <span class="text-[11px] text-gray-500">· ${meta}</span>` : ""}</li>`;
+    })
+    .join("");
+  return `
+  <div class="mt-2">
+    <div class="font-semibold mb-1">${escapeHtml(title)}</div>
+    <ul class="list-disc pl-5 space-y-1">${lis}</ul>
+  </div>`.trim();
+}
+
+function prefixDot(s: string) {
+  return s.startsWith("•") ? s : `• ${s}`;
+}
+function prefixDash(s: string) {
+  return s.startsWith("-") ? s : `- ${s}`;
+}
+function stripHtml(html: string) {
+  if (typeof window === "undefined") return html;
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent || div.innerText || "").trim();
+}
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]!));
+}
+function escapeAttr(s: string) {
+  return s.replace(/"/g, "&quot;");
+}
+function formatDate(d?: string) {
+  if (!d) return "";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toISOString().slice(0, 10);
 }

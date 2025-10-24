@@ -42,12 +42,10 @@ function sanitizeHtml(html: string): string {
     if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as HTMLElement;
       if (!ALLOWED.has(el.tagName)) {
-        // 허용 안 되면 텍스트만 남김
         const text = document.createTextNode(el.textContent || "");
         el.replaceWith(text);
         return;
       }
-      // 위험 속성 제거
       Array.from(el.attributes).forEach(attr => {
         const name = attr.name.toLowerCase();
         const isAllowedAttr =
@@ -55,10 +53,8 @@ function sanitizeHtml(html: string): string {
           (el.tagName === "IMG" && (name === "src" || name === "alt"));
         if (!isAllowedAttr) el.removeAttribute(name);
       });
-      // 인라인 스타일 제거
       el.removeAttribute("style");
     }
-    // 하위 순회
     let child = node.firstChild;
     while (child) {
       const next = child.nextSibling;
@@ -117,7 +113,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
       setBannerCenterX(Math.round(r.left + r.width / 2));
     };
 
-    // ResizeObserver로 사이즈 변화에 더 정확히 반응
     const ro = new ResizeObserver(reposition);
     if (writerPaneRef.current) ro.observe(writerPaneRef.current);
 
@@ -170,9 +165,8 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [doc]
   );
 
-  /* 🔧 cleanup에서 ref 스냅샷 사용 (경고 해소) */
   useEffect(() => {
-    const timersSnapshot = metaTimersRef.current; // 스냅샷 캡처
+    const timersSnapshot = metaTimersRef.current;
     return () => {
       if (timersSnapshot.company) clearTimeout(timersSnapshot.company);
       if (timersSnapshot.role) clearTimeout(timersSnapshot.role);
@@ -241,7 +235,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     [fields, blocks]
   );
 
-  /* Rich-text exec (execCommand, deprecated이지만 브라우저 지원 고려해 유지) */
+  /* Rich-text exec */
   const exec = useCallback((cmd: string, value?: string) => {
     document.execCommand(cmd, false, value);
     editorRef.current?.focus();
@@ -268,7 +262,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
       pre.appendChild(code);
       container.replaceWith(pre);
     }
-    // 상태 반영
     isFromEditorRef.current = true;
     setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
     editorRef.current?.focus();
@@ -366,13 +359,11 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* 키 핸들링 */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // 저장
       if (isCmdOrCtrl(e) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         void saveNow();
         return;
       }
-      // 서식
       if (isCmdOrCtrl(e) && e.key.toLowerCase() === "b") {
         e.preventDefault(); exec("bold");
       }
@@ -383,7 +374,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
         e.preventDefault(); exec("underline");
       }
 
-      // 슬래시 메뉴 트리거(라인 시작에서 /)
       if (e.key === "/" && isCaretAtLineStart()) {
         setSlashOpen(true);
         return;
@@ -393,7 +383,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
         return;
       }
 
-      // 마크다운풍 단축(# + Space 등)
       if (e.key === " ") {
         const sel = window.getSelection();
         if (!sel || sel.rangeCount === 0) return;
@@ -467,7 +456,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     setBlocks([{ type: "doc", html }]);
   }, []);
 
-  /* ✅ 붙여넣기 sanitize: 인라인 스타일/스팬 등 제거 */
+  /* ✅ 붙여넣기 sanitize */
   const handleEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
     const html = e.clipboardData.getData("text/html");
     const text = e.clipboardData.getData("text/plain");
@@ -478,7 +467,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
       isFromEditorRef.current = true;
       setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
     } else if (text) {
-      // 순수 텍스트는 안전 변환
       e.preventDefault();
       const safe = safeHtml(text).replace(/\n/g, "<br>");
       insertHtmlAtCaret(safe, editorRef);
@@ -574,24 +562,36 @@ export default function DocumentPane({ docId }: { docId: string }) {
     });
   }, []);
 
-  /* ✅ AI 패널 연결: 선택영역 텍스트 추출 & 대체 삽입 (+ 치환) */
+  /* ✅ AI 패널 연결: 선택영역 텍스트 추출(에디터 내부만) & 대체 삽입(+ {{company}}, {{role}} 치환) */
   const getSelectionHtml = useCallback(() => {
-    return window.getSelection()?.toString() ?? "";
+    const root = editorRef.current;
+    const sel = window.getSelection();
+    if (!root || !sel || sel.rangeCount === 0) return "";
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) return ""; // 에디터 외부 선택 방지
+    return sel.toString();
   }, []);
 
   const replaceSelection = useCallback((text: string) => {
-    // 1) 치환 컨텍스트 (회사/포지션 태그 기준)
     const ctx = {
       company: (companyTag || "").trim(),
       role: (roleTag || "").trim(),
     };
-    // 2) {{company}}, {{role}} 치환
     const filled = fillPlaceholders(text, ctx);
 
-    // 3) 플레인 텍스트 삽입 (출력 오염 방지)
-    document.execCommand("insertText", false, filled);
+    const root = editorRef.current;
+    if (root) root.focus();
+    try {
+      document.execCommand("insertText", false, filled);
+    } catch {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(filled));
+      sel.collapseToEnd();
+    }
 
-    // 상태 동기화
     isFromEditorRef.current = true;
     setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
     editorRef.current?.focus();
