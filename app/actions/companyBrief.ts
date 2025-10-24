@@ -9,9 +9,15 @@ import { prisma } from "@/lib/prisma";
 const API_KEY = process.env.OPENAI_API_KEY;
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 const BRIEF_TTL_DAYS = Number(process.env.COMPANY_BRIEF_TTL_DAYS ?? 30);
+
 /** (옵션) 실시간 뉴스 병합: 키가 없으면 자동 건너뜀 */
 const NEWS_API_ENDPOINT = process.env.NEWS_API_ENDPOINT;
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
+
+/** (옵션) 문화/인재상 원문 스니펫 프록시(없으면 건너뜀) */
+const CULTURE_API_ENDPOINT = process.env.CULTURE_API_ENDPOINT; // 예: /api/culture
+const CULTURE_API_KEY = process.env.CULTURE_API_KEY;
+
 /** (옵션) 확장 섹션 생성: 0/1 (기본 1) */
 const ENABLE_ENRICH = (process.env.COMPANY_BRIEF_ENRICH ?? "1") !== "0";
 
@@ -40,11 +46,14 @@ export type CompanyBrief = {
   bullets: string[];
 
   /** 새 확장 필드(메모리 전용; DB는 기존 스키마 유지) */
-  values?: string[];          // 회사 핵심 가치/문화
-  hiringFocus?: string[];     // JD에서 강조되는 역량/경험
-  resumeTips?: string[];      // 서류 합격 꿀팁
-  interviewTips?: string[];   // 면접 팁
-  recent?: BriefNews[];       // 최근 이슈/뉴스 (실시간 뉴스 API 있으면 병합)
+  values?: string[];         // 회사 핵심 가치
+  culture?: string[];        // 조직문화/일하는 방식
+  talentTraits?: string[];   // 인재상(태도/역량 키워드)
+  hiringFocus?: string[];    // JD에서 강조되는 역량/경험
+  resumeTips?: string[];     // 서류 합격 꿀팁
+  interviewTips?: string[];  // 면접 팁
+  recent?: BriefNews[];      // 최근 이슈/뉴스
+  sourceNotes?: string[];    // 참고 출처(도메인·페이지명 등)
 
   updatedAt: string;
 };
@@ -60,7 +69,7 @@ function isStale(d: Date | null | undefined, days = BRIEF_TTL_DAYS) {
 
 /** =========================
  *  서버에서 절대 URL 베이스 결정
- *  - NEWS_API_ENDPOINT 가 '/api/news' 같은 상대경로여도 안전하게 동작
+ *  - 상대경로('/api/news', '/api/culture')도 안전하게 동작
  *  ========================= */
 function getBaseUrl() {
   if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL; // 예: https://speccloud.app
@@ -78,9 +87,6 @@ async function fetchCompanyNews(company: string): Promise<BriefNews[]> {
   try {
     const base = NEWS_API_ENDPOINT.startsWith("http") ? "" : getBaseUrl();
     const url = `${base}${NEWS_API_ENDPOINT}?q=${encodeURIComponent(company)}&count=5`;
-
-    // 디버그 로그 (필요 시 확인)
-    // console.log("[news] request", { url });
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${NEWS_API_KEY}` },
@@ -110,40 +116,85 @@ async function fetchCompanyNews(company: string): Promise<BriefNews[]> {
 }
 
 /** =========================
+ *  (옵션) 문화/인재상 스니펫 수집
+ *  - 프록시가 회사 공식 페이지(about/culture/careers)를 긁어
+ *    텍스트/도메인 배열을 표준 포맷으로 반환한다고 가정
+ *  - 프록시가 없으면 건너뜀 (LLM-only로 동작)
+ *  ========================= */
+async function fetchCultureSignals(company: string): Promise<{ texts: string[]; sources: string[] }> {
+  if (!CULTURE_API_ENDPOINT || !CULTURE_API_KEY) return { texts: [], sources: [] };
+  try {
+    const base = CULTURE_API_ENDPOINT.startsWith("http") ? "" : getBaseUrl();
+    const url = `${base}${CULTURE_API_ENDPOINT}?q=${encodeURIComponent(company)}&limit=3`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${CULTURE_API_KEY}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      console.warn("[culture] provider not ok", res.status);
+      return { texts: [], sources: [] };
+    }
+    const data = await res.json();
+    const texts: string[] = Array.isArray(data?.snippets) ? data.snippets.map(String) : [];
+    const sources: string[] = Array.isArray(data?.sources) ? data.sources.map(String) : [];
+    return { texts, sources };
+  } catch (e) {
+    console.warn("[culture] fetch error", e);
+    return { texts: [], sources: [] };
+  }
+}
+
+/** =========================
  *  OpenAI 호출 → 확장 브리프 생성(JSON 엄격)
  *  - DB에는 blurb/bullets만 저장, 나머지는 응답으로만 전달
+ *  - 증거 텍스트가 있으면 그 범위 내에서만 요약(환각 최소화)
  *  ========================= */
 async function generateBrief(company: string, role?: string | null): Promise<CompanyBrief> {
+  // (옵션) 문화/인재상 근거 수집
+  const { texts: cultureTexts, sources: cultureSources } = await fetchCultureSignals(company);
+
   const sys = [
-    "You are a helpful assistant that prepares concise Korean company briefs for job applicants.",
+    "You are a careful assistant that prepares concise Korean company briefs for job applicants.",
     "Always write in Korean.",
-    "Be accurate but if not sure, use bracketed placeholders like [연도], [X명], [수치?].",
-    "Keep it concise and practical for resume/cover-letter writing.",
-    "",
-    "Return STRICT JSON only with keys:",
-    "company, role, blurb, bullets, values, hiring_focus, resume_tips, interview_tips.",
-    "- bullets: 4~6개, 비즈니스 모델/제품/고객/경쟁우위/최근 전략·지표(모르면 [추정]/[정보 없음]), 문화/가치 등.",
-    "- values: 회사가 중요시하는 가치나 문화(알려진 범위).",
-    "- hiring_focus: JD에서 흔히 강조되는 역량/경험 포인트.",
-    "- resume_tips: 지원서(자소서/이력서) 작성 시 적용 가능한 팁(행동지표, 수치화 등).",
-    "- interview_tips: 선택 항목.",
+    "If evidence texts are provided, DO NOT invent facts beyond them.",
+    "When uncertain, use bracketed placeholders like [연도], [X명], [수치?].",
+    "Output strictly in JSON.",
   ].join("\n");
 
-  const user = [
+  const reqLines = [
     `회사명: ${company}`,
     role ? `지원 포지션: ${role}` : "",
     "",
     "요구사항:",
-    "- 2~3문장 blurb: 회사 핵심 소개, 산업/제품/차별점.",
-    "- bullets 4~6개.",
-    "- values/hiring_focus/resume_tips/interview_tips 포함.",
-    "- 실존 고유명사·날짜 임의 창작 금지, 불확실하면 [대괄호] 처리.",
-    "- JSON만 출력.",
-  ].join("\n");
+    "- blurb: 회사 핵심 2~3문장.",
+    "- bullets: 4~6개 (제품/고객/차별점/최근 전략·지표/문화).",
+    "- values: 3~6개 (핵심가치 키워드).",
+    "- culture: 3~6개 (일하는 방식/복지/소통/제도).",
+    "- talent_traits: 3~6개 (인재상 키워드, 태도/역량).",
+    "- hiring_focus: 3~6개 (JD에서 자주 강조).",
+    "- resume_tips, interview_tips: 각 2~4개.",
+    "- source_notes: 참고한 출처(도메인 또는 페이지 이름) 1~4개.",
+    "- 실존 고유명사·날짜 임의 창작 금지. 불확실하면 [대괄호].",
+    "- JSON 키: company, role, blurb, bullets, values, culture, talent_traits, hiring_focus, resume_tips, interview_tips, source_notes",
+  ];
+
+  const evidence = cultureTexts.length
+    ? [
+        "",
+        "[증거 텍스트 시작]",
+        ...cultureTexts.map((t, i) => `(${i + 1}) ${t}`),
+        "[증거 텍스트 끝]",
+        cultureSources.length ? `참고 출처: ${cultureSources.join(", ")}` : "",
+        "",
+        "위 증거 범위 내에서 요약하세요. 증거에 없는 내용은 [정보 부족] 또는 [추정] 표기.",
+      ].join("\n")
+    : "";
+
+  const user = [reqLines.join("\n"), evidence].filter(Boolean).join("\n");
 
   const res = await client.chat.completions.create({
     model: MODEL,
-    temperature: 0.2,
+    temperature: cultureTexts.length ? 0.1 : 0.2, // 증거 있으면 더 보수적
     messages: [
       { role: "system", content: sys },
       { role: "user", content: user },
@@ -171,17 +222,13 @@ async function generateBrief(company: string, role?: string | null): Promise<Com
           "• [정보 부족] 최근 전략/지표",
         ];
 
-  const values: string[] =
-    Array.isArray(parsed?.values) ? parsed.values.map((x: any) => String(x)) : [];
-
-  const hiringFocus: string[] =
-    Array.isArray(parsed?.hiring_focus) ? parsed.hiring_focus.map((x: any) => String(x)) : [];
-
-  const resumeTips: string[] =
-    Array.isArray(parsed?.resume_tips) ? parsed.resume_tips.map((x: any) => String(x)) : [];
-
-  const interviewTips: string[] =
-    Array.isArray(parsed?.interview_tips) ? parsed.interview_tips.map((x: any) => String(x)) : [];
+  const values: string[] = Array.isArray(parsed?.values) ? parsed.values.map(String) : [];
+  const culture: string[] = Array.isArray(parsed?.culture) ? parsed.culture.map(String) : [];
+  const talentTraits: string[] = Array.isArray(parsed?.talent_traits) ? parsed.talent_traits.map(String) : [];
+  const hiringFocus: string[] = Array.isArray(parsed?.hiring_focus) ? parsed.hiring_focus.map(String) : [];
+  const resumeTips: string[] = Array.isArray(parsed?.resume_tips) ? parsed.resume_tips.map(String) : [];
+  const interviewTips: string[] = Array.isArray(parsed?.interview_tips) ? parsed.interview_tips.map(String) : [];
+  const sourceNotes: string[] = Array.isArray(parsed?.source_notes) ? parsed.source_notes.map(String) : cultureSources;
 
   return {
     company,
@@ -189,9 +236,12 @@ async function generateBrief(company: string, role?: string | null): Promise<Com
     blurb,
     bullets,
     values,
+    culture,
+    talentTraits,
     hiringFocus,
     resumeTips,
     interviewTips,
+    sourceNotes,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -199,7 +249,7 @@ async function generateBrief(company: string, role?: string | null): Promise<Com
 /** =========================
  *  ✅ DB 캐시 조회 또는 새로 생성 (+ 확장 섹션/뉴스 병합)
  *  - DB 스키마는 blurb/bullets만 저장.
- *  - values/hiringFocus/resumeTips/interviewTips/recent 은 응답에만 포함(비저장).
+ *  - values/culture/talentTraits/hiringFocus/resumeTips/interviewTips/recent/sourceNotes 은 응답에만 포함(비저장).
  *  ========================= */
 export async function fetchCompanyBrief(company: string, role?: string | null): Promise<CompanyBrief> {
   const key = { company: company.trim(), role: (role ?? null)?.trim?.() || null };
@@ -270,12 +320,15 @@ export async function fetchCompanyBrief(company: string, role?: string | null): 
   // 4) 확장 섹션 생성 (메모리 전용) + 실시간 뉴스 병합
   if (ENABLE_ENRICH) {
     try {
-      // OpenAI로 확장 섹션 생성 (values/hiringFocus/resumeTips/interviewTips)
+      // OpenAI로 확장 섹션 생성 (values/culture/talentTraits/hiringFocus/resumeTips/interviewTips/sourceNotes)
       const enrich = await generateBrief(base.company, base.role);
       base.values = enrich.values;
+      base.culture = enrich.culture;
+      base.talentTraits = enrich.talentTraits;
       base.hiringFocus = enrich.hiringFocus;
       base.resumeTips = enrich.resumeTips;
       base.interviewTips = enrich.interviewTips;
+      base.sourceNotes = enrich.sourceNotes;
     } catch (e) {
       console.warn("[companyBrief] enrich generation failed:", e);
     }
@@ -302,7 +355,7 @@ export async function fetchCompanyBrief(company: string, role?: string | null): 
 /** =========================
  *  ✅ 강제 재생성(캐시 무시) API
  *  - 캐시와 TTL을 무시하고 최신 생성 결과를 저장·반환
- *  - values/hiringFocus/resumeTips/interviewTips/recent 도 포함
+ *  - 확장 필드도 포함하여 반환
  *  ========================= */
 export async function refreshCompanyBrief(company: string, role?: string | null): Promise<CompanyBrief> {
   const key = { company: company.trim(), role: (role ?? null)?.trim?.() || null };
@@ -334,14 +387,17 @@ export async function refreshCompanyBrief(company: string, role?: string | null)
     updatedAt: saved.updatedAt.toISOString(),
   };
 
-  // 4) 확장 섹션(가치/채용포인트/팁) 생성 (환경변수에 따라)
+  // 4) 확장 섹션(가치/문화/인재상/채용포인트/팁/출처) 생성 (환경변수에 따라)
   if (ENABLE_ENRICH) {
     try {
       const enrich = await generateBrief(base.company, base.role);
       base.values = enrich.values;
+      base.culture = enrich.culture;
+      base.talentTraits = enrich.talentTraits;
       base.hiringFocus = enrich.hiringFocus;
       base.resumeTips = enrich.resumeTips;
       base.interviewTips = enrich.interviewTips;
+      base.sourceNotes = enrich.sourceNotes;
     } catch (e) {
       console.warn("[companyBrief] enrich generation failed:", e);
     }

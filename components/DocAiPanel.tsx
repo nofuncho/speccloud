@@ -6,7 +6,7 @@ import { runAi } from "@/app/actions/aiActions";
 import {
   fetchCompanyBrief,
   listRecentCompanyBriefs,
-  refreshCompanyBrief, // ✅ 강제 재생성 API 추가 임포트
+  refreshCompanyBrief, // ✅ 강제 재생성 API
   type CompanyBrief,
 } from "@/app/actions/companyBrief";
 
@@ -103,6 +103,8 @@ export default function DocAiPanel({
 
     // 확장 섹션
     if (brief.values?.length) lines.push(`\n[핵심 가치]\n${brief.values.map(prefixDot).join("\n")}`);
+    if (brief.culture?.length) lines.push(`\n[조직문화]\n${brief.culture.map(prefixDot).join("\n")}`);
+    if (brief.talentTraits?.length) lines.push(`\n[인재상]\n${brief.talentTraits.map(prefixDot).join("\n")}`);
     if (brief.hiringFocus?.length)
       lines.push(`\n[채용 포인트]\n${brief.hiringFocus.map(prefixDot).join("\n")}`);
     if (brief.resumeTips?.length)
@@ -114,8 +116,16 @@ export default function DocAiPanel({
     if (brief.recent?.length) {
       const newsHeads = brief.recent
         .slice(0, 5)
-        .map((n) => `• ${n.title}${n.source ? ` (${n.source})` : ""}${n.date ? ` - ${formatDate(n.date)}` : ""}`);
+        .map(
+          (n) =>
+            `• ${n.title}${n.source ? ` (${n.source})` : ""}${n.date ? ` - ${formatDate(n.date)}` : ""}`
+        );
       if (newsHeads.length) lines.push(`\n[최근 뉴스]\n${newsHeads.join("\n")}`);
+    }
+
+    // 출처(있으면)
+    if (brief.sourceNotes?.length) {
+      lines.push(`\n[출처]\n- ${brief.sourceNotes.join("\n- ")}`);
     }
 
     return lines.join("\n").trim();
@@ -136,7 +146,9 @@ export default function DocAiPanel({
 
       const payload =
         useContext && briefText
-          ? `${selected}\n\n[회사 컨텍스트]\n회사: ${company ?? "-"} / 포지션: ${role ?? "-"}\n${briefText}`
+          ? `${selected}\n\n[회사 컨텍스트]\n회사: ${company ?? "-"} / 포지션: ${
+              role ?? "-"
+            }\n${briefText}`
           : selected;
 
       const result = await runAi(mode, payload, { tone });
@@ -171,16 +183,27 @@ export default function DocAiPanel({
   const briefHtml = useMemo(() => {
     if (!brief) return "";
     const vals = renderList("핵심 가치", brief.values);
+    const cult = renderList("조직문화", brief.culture);
+    const talent = renderList("인재상", brief.talentTraits);
     const hire = renderList("채용에서 중요하게 보는 포인트", brief.hiringFocus);
     const resume = renderList("서류 합격 Tip", brief.resumeTips);
     const inter = renderList("면접 Tip", brief.interviewTips);
     const news = renderNews("최근 이슈 / 뉴스", brief.recent);
+    const sources =
+      brief.sourceNotes?.length
+        ? `<div class="mt-2 text-[11px] text-gray-500">출처: ${escapeHtml(
+            brief.sourceNotes.join(", ")
+          )}</div>`
+        : "";
 
     return `
 <section class="rounded-xl border bg-white p-4 my-4">
-  <h3 class="font-bold text-[15px] mb-2">🏢 회사 브리프 — ${escapeHtml(brief.company)}${brief.role ? ` / ${escapeHtml(brief.role)}` : ""}</h3>
+  <h3 class="font-bold text-[15px] mb-2">🏢 회사 브리프 — ${escapeHtml(brief.company)}${
+      brief.role ? ` / ${escapeHtml(brief.role)}` : ""
+    }</h3>
   <p class="text-[13px] text-gray-700 mb-2">${escapeHtml(brief.blurb)}</p>
-  ${vals}${hire}${resume}${inter}${news}
+  ${vals}${cult}${talent}${hire}${resume}${inter}${news}
+  ${sources}
   <div class="mt-2 text-[11px] text-gray-400">업데이트: ${escapeHtml(
     new Date(brief.updatedAt).toLocaleDateString()
   )}</div>
@@ -238,6 +261,12 @@ export default function DocAiPanel({
             {brief.values?.length ? (
               <SectionPreview title="핵심 가치" items={brief.values} />
             ) : null}
+            {brief.culture?.length ? (
+              <SectionPreview title="조직문화" items={brief.culture} />
+            ) : null}
+            {brief.talentTraits?.length ? (
+              <SectionPreview title="인재상" items={brief.talentTraits} />
+            ) : null}
             {brief.hiringFocus?.length ? (
               <SectionPreview title="채용 포인트" items={brief.hiringFocus} />
             ) : null}
@@ -277,6 +306,11 @@ export default function DocAiPanel({
                   ))}
                 </ul>
               </div>
+            ) : null}
+
+            {/* 출처 */}
+            {brief.sourceNotes?.length ? (
+              <div className="text-[11px] text-gray-500">출처: {brief.sourceNotes.join(", ")}</div>
             ) : null}
 
             {/* 액션 */}
@@ -319,7 +353,7 @@ export default function DocAiPanel({
                   if (!company) return;
                   setBriefLoading(true);
                   try {
-                    const data = await refreshCompanyBrief(company, role); // ✅ 캐시 무시하고 즉시 재생성
+                    const data = await refreshCompanyBrief(company, role); // 캐시 무시하고 즉시 재생성
                     setBrief(data);
                   } finally {
                     setBriefLoading(false);
@@ -404,7 +438,7 @@ export default function DocAiPanel({
           disabled={loading}
           className="w-full bg-black text-white text-sm py-2.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 transition"
         >
-          {loading ? "AI 처리 중..." : (mode === "expand" ? "선택 내용 보충" : "선택 영역 첨삭")}
+          {loading ? "AI 처리 중..." : mode === "expand" ? "선택 내용 보충" : "선택 영역 첨삭"}
         </button>
 
         {error && <div className="text-xs text-red-500">{error}</div>}
@@ -471,6 +505,8 @@ function buildPlainBlock(b: CompanyBrief): string {
 
   // 확장
   pushList("핵심 가치", b.values);
+  pushList("조직문화", b.culture);          // ✅ 추가
+  pushList("인재상", b.talentTraits);      // ✅ 추가
   pushList("채용 포인트", b.hiringFocus);
   pushList("서류 팁", b.resumeTips);
   pushList("면접 팁", b.interviewTips);
@@ -482,6 +518,11 @@ function buildPlainBlock(b: CompanyBrief): string {
       const meta = [n.source, formatDate(n.date)].filter(Boolean).join(" · ");
       lines.push(`• ${n.title}${meta ? ` (${meta})` : ""}${n.url ? ` <${n.url}>` : ""}`);
     });
+  }
+
+  // 출처
+  if (b.sourceNotes?.length) {
+    lines.push(`\n출처: ${b.sourceNotes.join(", ")}`); // ✅ 추가
   }
 
   lines.push(`\n업데이트: ${new Date(b.updatedAt).toLocaleDateString()}`);
