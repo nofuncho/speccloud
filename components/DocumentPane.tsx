@@ -743,6 +743,8 @@ export default function DocumentPane({ docId }: { docId: string }) {
         {/* 우측 사이드 — ✅ AI 패널 장착 */}
         <div className="min-h-[calc(100vh-64px)] w-full lg:w-[320px] relative border-l bg-white">
           <DocAiPanel
+            company={companyTag}
+            role={roleTag}
             getSelectionHtml={getSelectionHtml}
             replaceSelection={replaceSelection}
           />

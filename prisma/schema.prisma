@@ -206,3 +206,19 @@ enum template_category {
   RESUME
   PORTFOLIO
 }
+
+/// ================================
+/// ✅ 회사 브리프 캐시 모델 (DB 캐시)
+/// ================================
+model CompanyBrief {
+  id        String   @id @default(cuid())
+  company   String
+  role      String?   // null 허용 (포지션 없이도 저장)
+  blurb     String
+  bullets   Json      // string[] 저장용
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([company, role])
+  @@index([updatedAt])
+}

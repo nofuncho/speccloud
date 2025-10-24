@@ -29,8 +29,10 @@ export async function createFolderQuick(fd: FormData) {
   if (!parent) throw new Error("부모 폴더를 찾을 수 없습니다.");
 
   const baseName = "새 폴더";
+  // ❌ before: where: { createdById: userId, parent: { is: { id: parentId } } }
+  // ✅ after: parentId 로 직접 필터
   const siblings = await prisma.folder.findMany({
-    where: { createdById: userId, parent: { is: { id: parentId } } },
+    where: { createdById: userId, parentId },
     select: { name: true },
   });
   const taken = new Set(siblings.map((s) => s.name));
@@ -49,8 +51,10 @@ export async function createFolderQuick(fd: FormData) {
         data: {
           name: candidate,
           type: FolderType.CUSTOM,
-          parent: { connect: { id: parentId } },
-          createdBy: { connect: { id: userId } },
+          // ❌ before: parent / createdBy
+          // ✅ after: folder(부모 관계), user(작성자 관계)
+          folder: { connect: { id: parentId } },
+          user: { connect: { id: userId } },
         },
       });
       revalidatePath("/app");
@@ -69,8 +73,8 @@ export async function createFolderQuick(fd: FormData) {
     data: {
       name: `${baseName} (${Date.now() % 100000})`,
       type: FolderType.CUSTOM,
-      parent: { connect: { id: parentId } },
-      createdBy: { connect: { id: userId } },
+      folder: { connect: { id: parentId } },
+      user: { connect: { id: userId } },
     },
   });
   revalidatePath("/app");
@@ -99,8 +103,8 @@ export async function createDocumentQuick(fd: FormData) {
       title,
       status: "draft",
       content: initialContent,
-      folder: { connect: { id: folderId } },
-      createdBy: { connect: { id: userId } },
+      folder: { connect: { id: folderId } }, // ✅ OK (문서→폴더 관계명: folder)
+      user: { connect: { id: userId } },     // ❌ createdBy → ✅ user (문서→유저 관계명: user)
     },
   });
 
@@ -259,8 +263,10 @@ export default async function FolderPane({ folderId }: { folderId: string | null
     folder.type === "ROOT_PORTFOLIO";
 
   const [children, documents] = await Promise.all([
+    // ❌ before: where: { parent: { is: { id: safeFolderId } } }
+    // ✅ after: parentId 로 간단히 필터
     prisma.folder.findMany({
-      where: { parent: { is: { id: safeFolderId } } },
+      where: { parentId: safeFolderId },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true },
     }),

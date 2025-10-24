@@ -1,13 +1,25 @@
 // lib/prisma.ts
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+/**
+ * ✅ PrismaClient 싱글톤 설정
+ * - Next.js 개발 환경(HMR)에서 중복 생성 방지
+ * - production 환경에서는 1회성 생성
+ * - 개발 시 쿼리, 경고, 에러 로그 표시
+ */
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
 
 export const prisma =
-  globalForPrisma.prisma ||
+  globalForPrisma.prisma ??
   new PrismaClient({
-    log: ["query", "error", "warn"], // 개발 중에는 쿼리 로그 보기 편하게
+    log:
+      process.env.NODE_ENV === "development"
+        ? ["query", "warn", "error"]
+        : ["error"],
   });
 
-// Next.js에서는 hot reload 때마다 PrismaClient가 중복 생성되지 않게 global에 저장
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
