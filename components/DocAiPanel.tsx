@@ -75,6 +75,7 @@ export default function DocAiPanel({
             <option value="keywords">핵심 키워드 추출</option>
             <option value="translate_en">영문 번역</option>
             <option value="translate_ko">한글 번역</option>
+            <option value="expand">내용 보충(확장)</option>
           </select>
         </div>
 

@@ -25,7 +25,8 @@ export type AiMode =
   | "summarize"     // 요약
   | "keywords"      // 키워드 추출
   | "translate_en"  // 한국어 -> 영어
-  | "translate_ko"; // 영어 -> 한국어
+  | "translate_ko"  // 영어 -> 한국어
+  | "expand";       // ✅ 내용 보충(확장)
 
 export type UserProfile = {
   years?: number;
@@ -78,6 +79,14 @@ function buildUserPrompt(op: AiMode, text: string, extra?: { tone?: string }) {
       return `다음을 자연스러운 비즈니스 영어로 번역해줘:\n\n${text}`;
     case "translate_ko":
       return `다음을 자연스러운 비즈니스 한국어로 번역해줘:\n\n${text}`;
+    case "expand":
+      return [
+        "다음 문장을 상황·과정·결과를 포함한 구체적인 단락으로 확장해줘.",
+        "STAR 구조(상황→과제→행동→결과)를 참고해서 자연스럽게 보충하고,",
+        "불확실한 수치나 기간은 [대괄호]로 표시해줘.",
+        "마지막엔 bullet 2~3개로 요약 포인트도 제시해줘.",
+        `원문:\n${text}`,
+      ].join("\n");
     default:
       return text;
   }
@@ -101,10 +110,7 @@ export async function runAi(
   const input = (text ?? "").trim();
   if (!input) return "";
 
-  // 시스템 프롬프트
   const system = buildSystem(profile);
-
-  // 사용자 요청 프롬프트
   const userPrompt = buildUserPrompt(op, input, extra);
 
   try {
@@ -114,15 +120,13 @@ export async function runAi(
         { role: "system", content: system },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.3,
+      temperature: 0.4,
     });
 
     const out = res.choices?.[0]?.message?.content ?? "";
-    // 에디터 삽입 시 깔끔하게 쓰도록 사소한 정리
     return out.replace(/^\s+|\s+$/g, "");
   } catch (err: unknown) {
     console.error("[runAi] OpenAI error:", err);
-    // 클라이언트에 노출되는 메시지는 안전하게
     throw new Error("AI 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.");
   }
 }
@@ -149,4 +153,7 @@ export async function aiKoToEn(text: string, profile?: UserProfile) {
 }
 export async function aiEnToKo(text: string, profile?: UserProfile) {
   return runAi("translate_ko", text, undefined, profile);
+}
+export async function aiExpand(text: string, profile?: UserProfile) {
+  return runAi("expand", text, undefined, profile);
 }
