@@ -123,7 +123,7 @@ export default async function SidebarTree({ roots, activeFolderId }: Props) {
 
       {/* ✅ 최상단: 온보딩 배너 (클라이언트 섬) */}
       <div className="px-3 pt-3">
-        <SidebarOnboardingCard imageSrc="/chaltteok.png" />
+        <SidebarOnboardingCard />
       </div>
 
       {/* Nav (하위폴더 비노출) */}

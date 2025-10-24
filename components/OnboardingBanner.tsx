@@ -50,52 +50,53 @@ export default function OnboardingBanner() {
         <div className="flex items-center">
           {/* 텍스트 */}
           <div className="flex-1 pr-[70px]">
-            <div className="text-[15px] sm:text-[16px] leading-[1.3] font-extrabold tracking-[-0.01em] text-gray-900">
+            <div className="text-[15px] sm:text-[16px] leading-[1.3] font-bold tracking-[-0.01em] text-gray-900">
               찰떡이와 함께<br />쉽게 기초 세팅 시작
             </div>
             <div className="mt-[4px] text-[12px] text-[#6B7280]">
               AI 기능들을 위해 필요해요
             </div>
 
-            {/* 게이지 (소형)
-            <div className="mt-2 flex items-center gap-[6px]">
-            <div className="h-[6px] w-[20px] rounded-full bg-gradient-to-r from-[#3B82F6] to-[#60A5FA]" />
-            <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
-            <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
-            </div>
-            */}
+            {/* 게이지 주석 처리됨 */}
+            {false && (
+              <div className="mt-2 flex items-center gap-[6px]">
+                <div className="h-[6px] w-[20px] rounded-full bg-gradient-to-r from-[#3B82F6] to-[#60A5FA]" />
+                <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
+                <div className="h-[6px] w-[20px] rounded-full bg-[#E5EBF7]" />
+              </div>
+            )}
           </div>
 
-          {/* 캐릭터 */}
-            <Image
+          {/* 캐릭터 (세로 중앙) */}
+          <Image
             src="/onboarding/character.png"
             alt="AI 찰떡 캐릭터"
             width={80}
             height={80}
             className="absolute right-2 top-1/2 -translate-y-1/2"
             priority
-            />
+          />
         </div>
       </div>
 
       {/* 단계별 모달 */}
-      <OnboardingModal open={activeStep === 1} onClose={close} title="기초세팅 (채팅)">
-        <div className="px-4 pt-3">
-          <p className="text-[13px] text-gray-500">
-            입력한 내용으로 자기소개서/이력서/프로젝트 초안을 자동으로 채워드려요.
-          </p>
-        </div>
-        <div className="p-4">
-          <div className="h-[500px]">
+      <OnboardingModal
+        open={activeStep === 1}
+        onClose={close}
+        title="기초세팅 (채팅)"
+        frameless       // 외부 프레임 제거
+        noInnerCard     // 내부 카드 제거
+        bodyClassName="p-0 bg-transparent" // (선택) 본문 패딩 제거
+        >
+        <div className="h-[500px]">
             <OnboardingChat
-              onFinished={() => {
+            onFinished={() => {
                 markDone(1);
                 close();
-              }}
+            }}
             />
-          </div>
         </div>
-      </OnboardingModal>
+        </OnboardingModal>
 
       <OnboardingModal open={activeStep === 2} onClose={close} title="AI 사용법 (준비 중)">
         <div className="p-4">
