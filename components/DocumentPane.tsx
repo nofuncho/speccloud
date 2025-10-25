@@ -740,14 +740,16 @@ export default function DocumentPane({ docId }: { docId: string }) {
           </div>
         </div>
 
-        {/* 우측 사이드 — ✅ AI 패널 장착 */}
-        <div className="min-h-[calc(100vh-64px)] w-full lg:w-[320px] relative border-l bg-white">
-          <DocAiPanel
-            company={companyTag}
-            role={roleTag}
-            getSelectionHtml={getSelectionHtml}
-            replaceSelection={replaceSelection}
-          />
+        {/* 우측 사이드 — ✅ AI 패널 (이중 라인 제거 + 잘림 방지) */}
+        <div className="hidden lg:block w-[360px] shrink-0">
+          <div className="sticky top-0 min-h-[100dvh] max-h-[100dvh] overflow-y-auto pr-2 scrollbar-gutter-stable bg-white shadow-[inset_1px_0_0_0_#E5E7EB]">
+            <DocAiPanel
+              company={companyTag}
+              role={roleTag}
+              getSelectionHtml={getSelectionHtml}
+              replaceSelection={replaceSelection}
+            />
+          </div>
         </div>
       </div>
 

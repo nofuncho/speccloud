@@ -6,29 +6,20 @@
 
 /* App-wide styles */
 html, body, #__next { height: 100%; }
-:root { font-family: "Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-:root { --bg: #F8F9FA; --panel: #FFFFFF; --muted: #E5E7EB; }
+:root {
+  font-family: "Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bg: #F8F9FA; --panel: #FFFFFF; --muted: #E5E7EB;
+}
 body { background: var(--bg); color: #0F172A; }
 
+/* Scrollbar */
 .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
 .scroll-thin::-webkit-scrollbar-thumb { background-color: #E5E7EB; border-radius: 8px; }
 
-/* 기존 내용 유지하고 제일 아래 한 줄 추가 */
-html, body { overflow-x: hidden; }
-
 /* ===============================
-   DocAiPanel 강제 오버라이드
-   (라인/잘림/끊김 방지)
+   Layout safety
+   - 가로 스크롤 잠금
+   - 스크롤바 공간 예약(우측 잘림 방지)
 ================================= */
-#doc-ai-panel {
-  border-left: none !important;      /* 이중 라인 방지 */
-  margin-left: -1px;                 /* 좌측 라인을 한 줄만 보이게 보정 */
-}
-
-/* 드물게 border가 여전히 겹치면 아래 주석 해제해서 한 단계 더 덮기 */
-/* #doc-ai-panel { margin-left: -2px; } */
-
-/* 스크롤바 예약이 안 되는 브라우저 대비: 오른쪽 잘림 방지 */
-@supports not (scrollbar-gutter: stable) {
-  #doc-ai-panel { padding-right: 20px; }
-}
+html, body { overflow-x: hidden; }
+.scrollbar-gutter-stable { scrollbar-gutter: stable both-edges; }

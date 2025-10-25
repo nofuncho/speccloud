@@ -11,10 +11,10 @@ import {
 } from "@/app/actions/companyBrief";
 
 /**
- * DocAiPanel — sticky 레이아웃(겹침/클리핑 방지)
- * - 좌측 경계선: (이중선 제거) 패널 자체의 라인을 그리지 않음
- * - 세로 높이: min/max-h = viewport(헤더 보정) → 하단 끊김/늘어짐 방지
- * - 우측 잘림: scrollbar-gutter 예약 + 우측 내부 여백 강화
+ * DocAiPanel — 내부 클래스 미세조정 (패널 자체는 라인/스티키/높이계산 X)
+ * - 좌측 경계선: (이중선 제거) 패널 자체는 라인/그림자 없음
+ * - 세로 높이/스티키: 바깥 래퍼가 담당 (sticky+100dvh)
+ * - 우측 잘림: scrollbar-gutter 예약 + 우측 내부 여백 보강
  */
 export default function DocAiPanel({
   company,
@@ -222,29 +222,23 @@ export default function DocAiPanel({
   };
 
   /* ===== render ===== */
-  const HEADER_H = 65;
-
   return (
     <>
-      {/* sticky panel (좌측 라인 없음 / 우측 여백 강화) */}
+      {/* 내부: sticky/높이/라인 없음 (바깥 래퍼가 담당) */}
       <aside
         className="
-          w-[340px] lg:w-[360px] flex-none
-          lg:sticky lg:top-[65px]
-          bg-white shadow-sm
-          p-4 pr-6
+          w-full flex-none
+          bg-white
+          p-4
           overflow-y-auto overflow-x-hidden
           box-border break-words
+          pr-2 scrollbar-gutter-stable
         "
         style={{
-          minHeight: `calc(100vh - ${HEADER_H}px)`,
-          maxHeight: `calc(100vh - ${HEADER_H}px)`,
-          // 우측 잘림 방지: 스크롤바 공간 확보
-          scrollbarGutter: "stable both-edges" as any,
           // 스크롤 버블링 최소화
           overscrollBehavior: "contain",
           // 노치/세이프에어리어 환경 보정
-          paddingRight: "max(1.25rem, env(safe-area-inset-right))",
+          paddingRight: "max(0.5rem, env(safe-area-inset-right))",
         }}
       >
         {/* --- 상단: 회사 선택 요약 --- */}
