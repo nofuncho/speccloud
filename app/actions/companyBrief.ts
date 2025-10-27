@@ -1,442 +1,324 @@
 "use server";
 
-import OpenAI from "openai";
-import { prisma } from "@/lib/prisma";
-
-/** =========================
- *  ENV & 기본 설정
- *  ========================= */
-const API_KEY = process.env.OPENAI_API_KEY;
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
-const BRIEF_TTL_DAYS = Number(process.env.COMPANY_BRIEF_TTL_DAYS ?? 30);
-
-/** (옵션) 실시간 뉴스 병합: 키가 없으면 자동 건너뜀 */
-const NEWS_API_ENDPOINT = process.env.NEWS_API_ENDPOINT;
-const NEWS_API_KEY = process.env.NEWS_API_KEY;
-
-/** (옵션) 문화/인재상 원문 스니펫 프록시(없으면 건너뜀) */
-const CULTURE_API_ENDPOINT = process.env.CULTURE_API_ENDPOINT; // 예: /api/culture
-const CULTURE_API_KEY = process.env.CULTURE_API_KEY;
-
-/** (옵션) 확장 섹션 생성: 0/1 (기본 1) */
-const ENABLE_ENRICH = (process.env.COMPANY_BRIEF_ENRICH ?? "1") !== "0";
-
-if (!API_KEY) {
-  throw new Error("[companyBrief] OPENAI_API_KEY 가 설정되어 있지 않습니다.");
-}
-
-const client = new OpenAI({ apiKey: API_KEY });
-
-/** =========================
- *  타입 정의
- *  ========================= */
-export type BriefNews = {
-  title: string;
-  url?: string;
-  source?: string;
-  date?: string; // ISO or yyyy-mm-dd
-};
+/**
+ * companyBrief.ts — 근거(Evidence) 기반 요약 템플릿
+ * - 핵심: 출처 없는 항목은 생성/표시하지 않거나(STRICT) 명확히 경고
+ * - 어디서 채웠는지(sourceNotes, recent[].source/url/date) 반드시 유지
+ * - 최소한의 메모리 캐시 포함(실서비스는 DB로 교체)
+ */
 
 export type CompanyBrief = {
   company: string;
   role?: string | null;
 
-  /** 기존 필드(캐시/DB 저장) */
-  blurb: string;
-  bullets: string[];
+  // 본문 요약
+  blurb?: string | null;
+  bullets?: string[];                 // 핵심 요약 불릿
 
-  /** 새 확장 필드(메모리 전용; DB는 기존 스키마 유지) */
-  values?: string[];         // 회사 핵심 가치
-  culture?: string[];        // 조직문화/일하는 방식
-  talentTraits?: string[];   // 인재상(태도/역량 키워드)
-  hiringFocus?: string[];    // JD에서 강조되는 역량/경험
-  resumeTips?: string[];     // 서류 합격 꿀팁
-  interviewTips?: string[];  // 면접 팁
-  recent?: BriefNews[];      // 최근 이슈/뉴스
-  sourceNotes?: string[];    // 참고 출처(도메인·페이지명 등)
+  // 가치·문화·인재상
+  values?: string[];
+  culture?: string[];
+  talentTraits?: string[];
 
-  updatedAt: string;
+  // 채용 포인트 / 팁
+  hiringFocus?: string[];
+  resumeTips?: string[];
+  interviewTips?: string[];
+
+  // 뉴스/출처
+  recent?: { title: string; url?: string; source?: string; date?: string }[];
+  sourceNotes?: string[];             // “공식 홈페이지 About, 2024-xx-xx 채용공고, 연차보고서 …” 등 서술식 출처
+  updatedAt: string;                  // ISO date
 };
 
-/** =========================
- *  TTL 검사 (기본 30일)
- *  ========================= */
-function isStale(d: Date | null | undefined, days = BRIEF_TTL_DAYS) {
-  if (!d) return true;
-  const diff = Date.now() - d.getTime();
-  return diff > days * 24 * 60 * 60 * 1000;
+type RefreshOpts =
+  | { role?: string | null; section?: "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news"; strict?: boolean }
+  | undefined;
+
+/* ============================================================
+   캐시 (데모용) — 프로덕션에선 DB/Prisma로 교체
+============================================================ */
+const mem = new Map<string, CompanyBrief>();
+const keyOf = (c: string, r?: string | null) => `${c.toLowerCase()}::${(r ?? "").toLowerCase()}`;
+
+/* ============================================================
+   퍼블릭 API (UI가 호출)
+============================================================ */
+
+/** 최근 편집 목록 (프로덕션: DB ORDER BY updated_at DESC LIMIT n) */
+export async function listRecentCompanyBriefs(n = 8): Promise<CompanyBrief[]> {
+  const all = Array.from(mem.values()).sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1));
+  return all.slice(0, n);
 }
 
-/** =========================
- *  서버에서 절대 URL 베이스 결정
- *  - 상대경로('/api/news', '/api/culture')도 안전하게 동작
- *  ========================= */
-function getBaseUrl() {
-  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL; // 예: https://speccloud.app
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;        // 예: https://your-app.vercel.app
-  return "http://localhost:3000"; // 로컬 개발 기본값
-}
+/** 캐시/DB에서 로드 (없으면 빈 틀 반환) */
+export async function fetchCompanyBrief(company: string, role?: string | null): Promise<CompanyBrief> {
+  const k = keyOf(company, role);
+  const cached = mem.get(k);
+  if (cached) return clone(cached);
 
-/** =========================
- *  (옵션) 실시간 뉴스 조회
- *  - 키 없으면 빈 배열 반환
- *  - 사용하는 외부 뉴스 API 응답 구조에 맞춰 아래 매핑만 조정
- *  ========================= */
-async function fetchCompanyNews(company: string): Promise<BriefNews[]> {
-  if (!NEWS_API_ENDPOINT || !NEWS_API_KEY) return [];
-  try {
-    const base = NEWS_API_ENDPOINT.startsWith("http") ? "" : getBaseUrl();
-    const url = `${base}${NEWS_API_ENDPOINT}?q=${encodeURIComponent(company)}&count=5`;
+  // TODO: DB에서 로드 시도
+  // const row = await prisma.company_brief.findUnique(...)
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${NEWS_API_KEY}` },
-      cache: "no-store",
-      // next: { revalidate: 10800 } // 필요 시 캐시
-    });
-
-    if (!res.ok) {
-      console.error("[news] provider not ok", res.status);
-      return [];
-    }
-    const data = await res.json();
-    const items = (data?.articles || data?.value || data?.items || []) as any[];
-    return items
-      .slice(0, 5)
-      .map((it) => ({
-        title: it.title ?? it.name ?? "",
-        url: it.url ?? it.link,
-        source: it.source?.name ?? it.provider?.[0]?.name ?? it.source ?? "",
-        date: it.publishedAt ?? it.datePublished ?? it.pubDate,
-      }))
-      .filter((n) => n.title);
-  } catch (e) {
-    console.error("[news] fetch error", e);
-    return [];
-  }
-}
-
-/** =========================
- *  (옵션) 문화/인재상 스니펫 수집
- *  - 프록시가 회사 공식 페이지(about/culture/careers)를 긁어
- *    텍스트/도메인 배열을 표준 포맷으로 반환한다고 가정
- *  - 프록시가 없으면 건너뜀 (LLM-only로 동작)
- *  ========================= */
-async function fetchCultureSignals(company: string): Promise<{ texts: string[]; sources: string[] }> {
-  if (!CULTURE_API_ENDPOINT || !CULTURE_API_KEY) return { texts: [], sources: [] };
-  try {
-    const base = CULTURE_API_ENDPOINT.startsWith("http") ? "" : getBaseUrl();
-    const url = `${base}${CULTURE_API_ENDPOINT}?q=${encodeURIComponent(company)}&limit=3`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${CULTURE_API_KEY}` },
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      console.warn("[culture] provider not ok", res.status);
-      return { texts: [], sources: [] };
-    }
-    const data = await res.json();
-    const texts: string[] = Array.isArray(data?.snippets) ? data.snippets.map(String) : [];
-    const sources: string[] = Array.isArray(data?.sources) ? data.sources.map(String) : [];
-    return { texts, sources };
-  } catch (e) {
-    console.warn("[culture] fetch error", e);
-    return { texts: [], sources: [] };
-  }
-}
-
-/** =========================
- *  OpenAI 호출 → 확장 브리프 생성(JSON 엄격)
- *  - DB에는 blurb/bullets만 저장, 나머지는 응답으로만 전달
- *  - 증거 텍스트가 있으면 그 범위 내에서만 요약(환각 최소화)
- *  ========================= */
-async function generateBrief(company: string, role?: string | null): Promise<CompanyBrief> {
-  // (옵션) 문화/인재상 근거 수집
-  const { texts: cultureTexts, sources: cultureSources } = await fetchCultureSignals(company);
-
-  const sys = [
-    "You are a careful assistant that prepares concise Korean company briefs for job applicants.",
-    "Always write in Korean.",
-    "If evidence texts are provided, DO NOT invent facts beyond them.",
-    "When uncertain, use bracketed placeholders like [연도], [X명], [수치?].",
-    "Output strictly in JSON.",
-  ].join("\n");
-
-  const reqLines = [
-    `회사명: ${company}`,
-    role ? `지원 포지션: ${role}` : "",
-    "",
-    "요구사항:",
-    "- blurb: 회사 핵심 2~3문장.",
-    "- bullets: 4~6개 (제품/고객/차별점/최근 전략·지표/문화).",
-    "- values: 3~6개 (핵심가치 키워드).",
-    "- culture: 3~6개 (일하는 방식/복지/소통/제도).",
-    "- talent_traits: 3~6개 (인재상 키워드, 태도/역량).",
-    "- hiring_focus: 3~6개 (JD에서 자주 강조).",
-    "- resume_tips, interview_tips: 각 2~4개.",
-    "- source_notes: 참고한 출처(도메인 또는 페이지 이름) 1~4개.",
-    "- 실존 고유명사·날짜 임의 창작 금지. 불확실하면 [대괄호].",
-    "- JSON 키: company, role, blurb, bullets, values, culture, talent_traits, hiring_focus, resume_tips, interview_tips, source_notes",
-  ];
-
-  const evidence = cultureTexts.length
-    ? [
-        "",
-        "[증거 텍스트 시작]",
-        ...cultureTexts.map((t, i) => `(${i + 1}) ${t}`),
-        "[증거 텍스트 끝]",
-        cultureSources.length ? `참고 출처: ${cultureSources.join(", ")}` : "",
-        "",
-        "위 증거 범위 내에서 요약하세요. 증거에 없는 내용은 [정보 부족] 또는 [추정] 표기.",
-      ].join("\n")
-    : "";
-
-  const user = [reqLines.join("\n"), evidence].filter(Boolean).join("\n");
-
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    temperature: cultureTexts.length ? 0.1 : 0.2, // 증거 있으면 더 보수적
-    messages: [
-      { role: "system", content: sys },
-      { role: "user", content: user },
-    ],
-    response_format: { type: "json_object" as const },
-  });
-
-  const raw = res.choices?.[0]?.message?.content ?? "{}";
-  let parsed: any = {};
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const m = raw.match(/\{[\s\S]*\}$/);
-    if (m) parsed = JSON.parse(m[0]);
-  }
-
-  const blurb = (parsed?.blurb ?? "").toString().trim() || `${company} 관련 요약`;
-  const bullets: string[] =
-    Array.isArray(parsed?.bullets) && parsed.bullets.length
-      ? parsed.bullets.map((x: any) => String(x))
-      : [
-          "• [정보 부족] 핵심 제품/서비스",
-          "• [정보 부족] 주요 고객/시장",
-          "• [정보 부족] 경쟁/차별점",
-          "• [정보 부족] 최근 전략/지표",
-        ];
-
-  const values: string[] = Array.isArray(parsed?.values) ? parsed.values.map(String) : [];
-  const culture: string[] = Array.isArray(parsed?.culture) ? parsed.culture.map(String) : [];
-  const talentTraits: string[] = Array.isArray(parsed?.talent_traits) ? parsed.talent_traits.map(String) : [];
-  const hiringFocus: string[] = Array.isArray(parsed?.hiring_focus) ? parsed.hiring_focus.map(String) : [];
-  const resumeTips: string[] = Array.isArray(parsed?.resume_tips) ? parsed.resume_tips.map(String) : [];
-  const interviewTips: string[] = Array.isArray(parsed?.interview_tips) ? parsed.interview_tips.map(String) : [];
-  const sourceNotes: string[] = Array.isArray(parsed?.source_notes) ? parsed.source_notes.map(String) : cultureSources;
-
-  return {
+  // 없으면 빈 골격
+  const empty: CompanyBrief = {
     company,
-    role: role ?? undefined,
-    blurb,
-    bullets,
-    values,
-    culture,
-    talentTraits,
-    hiringFocus,
-    resumeTips,
-    interviewTips,
-    sourceNotes,
+    role: role ?? null,
+    blurb: "",
+    bullets: [],
+    values: [],
+    culture: [],
+    talentTraits: [],
+    hiringFocus: [],
+    resumeTips: [],
+    interviewTips: [],
+    recent: [],
+    sourceNotes: [],
     updatedAt: new Date().toISOString(),
   };
+  mem.set(k, empty);
+  return clone(empty);
 }
 
-/** =========================
- *  ✅ DB 캐시 조회 또는 새로 생성 (+ 확장 섹션/뉴스 병합)
- *  - DB 스키마는 blurb/bullets만 저장.
- *  - values/culture/talentTraits/hiringFocus/resumeTips/interviewTips/recent/sourceNotes 은 응답에만 포함(비저장).
- *  ========================= */
-export async function fetchCompanyBrief(company: string, role?: string | null): Promise<CompanyBrief> {
-  const key = { company: company.trim(), role: (role ?? null)?.trim?.() || null };
+/**
+ * 강제 재생성(섹션별) — 반드시 “근거 기반”으로만 채움
+ * - strict=true: 출처 없는 항목은 비워둠
+ * - strict=false: 출처가 없는 텍스트는 `[출처 불명]` 태그를 달아 경고
+ */
+export async function refreshCompanyBrief(
+  company: string,
+  opts?: RefreshOpts
+): Promise<CompanyBrief> {
+  const role = opts?.role ?? null;
+  const strict = opts?.strict ?? true;
+  const section = opts?.section;
 
-  // 1) 기존 데이터 조회
-  const found = await prisma.companyBrief.findUnique({
-    where: { company_role: key },
-  });
+  // 1) 기존 결과 불러오기
+  const current = await fetchCompanyBrief(company, role);
 
-  // 2) TTL 만료 시 새로 생성 (OpenAI)
-  let base: CompanyBrief | null = null;
-  if (!found || isStale(found.updatedAt)) {
-    try {
-      const fresh = await generateBrief(key.company, key.role ?? undefined);
-      const saved = await prisma.companyBrief.upsert({
-        where: { company_role: key },
-        create: {
-          company: key.company,
-          role: key.role,
-          blurb: fresh.blurb,
-          bullets: fresh.bullets,
-        },
-        update: {
-          blurb: fresh.blurb,
-          bullets: fresh.bullets,
-        },
-      });
+  // 2) 자료 수집 (크롤링/검색/문서) — 반드시 “출처”를 함께 수집
+  const evidence = await collectEvidence(company, role);
 
-      base = {
-        company: saved.company,
-        role: saved.role ?? undefined,
-        blurb: saved.blurb,
-        bullets: (saved.bullets as any[])?.map(String) ?? [],
-        updatedAt: saved.updatedAt.toISOString(),
-      };
-    } catch (e) {
-      console.error("[companyBrief] refresh error:", e);
-      // 실패 시: 기존 캐시가 있으면 그것으로 복구
-      if (found) {
-        base = {
-          company: found.company,
-          role: found.role ?? undefined,
-          blurb: found.blurb,
-          bullets: (found.bullets as any[])?.map(String) ?? [],
-          updatedAt: found.updatedAt.toISOString(),
-        };
-      } else {
-        base = {
-          company: key.company,
-          role: key.role ?? undefined,
-          blurb: `${key.company} 관련 요약을 불러오지 못했습니다.`,
-          bullets: ["• [정보 없음]"],
-          updatedAt: new Date().toISOString(),
-        };
-      }
-    }
-  } else {
-    // 3) 최신 캐시 그대로 사용
-    base = {
-      company: found.company,
-      role: found.role ?? undefined,
-      blurb: found.blurb,
-      bullets: (found.bullets as any[])?.map(String) ?? [],
-      updatedAt: found.updatedAt.toISOString(),
-    };
+  // 3) 섹션별 요약 생성(근거 전달)
+  const next = clone(current);
+  if (!section || section === "basic") {
+    const { blurb, bullets, sourceNotes } = await summarizeBasic(company, role, evidence, { strict });
+    next.blurb = blurb;
+    next.bullets = bullets;
+    next.sourceNotes = mergeUnique(next.sourceNotes, sourceNotes);
+  }
+  if (!section || section === "valuesCultureTalent") {
+    const { values, culture, talentTraits, sourceNotes } = await summarizeValuesCultureTalent(company, role, evidence, { strict });
+    next.values = values;
+    next.culture = culture;
+    next.talentTraits = talentTraits;
+    next.sourceNotes = mergeUnique(next.sourceNotes, sourceNotes);
+  }
+  if (!section || section === "hiringPoints") {
+    const { hiringFocus, sourceNotes } = await summarizeHiringPoints(company, role, evidence, { strict });
+    next.hiringFocus = hiringFocus;
+    next.sourceNotes = mergeUnique(next.sourceNotes, sourceNotes);
+  }
+  if (!section || section === "tips") {
+    const { resumeTips, interviewTips, sourceNotes } = await summarizeTips(company, role, evidence, { strict });
+    next.resumeTips = resumeTips;
+    next.interviewTips = interviewTips;
+    next.sourceNotes = mergeUnique(next.sourceNotes, sourceNotes);
+  }
+  if (!section || section === "news") {
+    next.recent = await summarizeNews(company, evidence, { strict });
   }
 
-  // 4) 확장 섹션 생성 (메모리 전용) + 실시간 뉴스 병합
-  if (ENABLE_ENRICH) {
-    try {
-      // OpenAI로 확장 섹션 생성 (values/culture/talentTraits/hiringFocus/resumeTips/interviewTips/sourceNotes)
-      const enrich = await generateBrief(base.company, base.role);
-      base.values = enrich.values;
-      base.culture = enrich.culture;
-      base.talentTraits = enrich.talentTraits;
-      base.hiringFocus = enrich.hiringFocus;
-      base.resumeTips = enrich.resumeTips;
-      base.interviewTips = enrich.interviewTips;
-      base.sourceNotes = enrich.sourceNotes;
-    } catch (e) {
-      console.warn("[companyBrief] enrich generation failed:", e);
-    }
-  }
+  // 4) 정리 & 검증: 출처 없이 남은 텍스트 제거(STRICT) 또는 태깅
+  sanitizeBriefInPlace(next, { strict });
 
-  // 5) 실시간 뉴스가 가능하면 recent 병합 (키 없으면 skip)
-  try {
-    const live = await fetchCompanyNews(base.company);
-    if (live.length > 0) {
-      const dedup = new Map<string, BriefNews>();
-      live.forEach((n) => {
-        const k = `${n.title}|${n.url ?? ""}`;
-        if (!dedup.has(k)) dedup.set(k, n);
-      });
-      base.recent = Array.from(dedup.values());
-    }
-  } catch (e) {
-    console.warn("[companyBrief] news fetch failed:", e);
-  }
+  next.updatedAt = new Date().toISOString();
 
-  return base;
+  // 5) 저장 (프로덕션: DB upsert)
+  const k = keyOf(company, role);
+  mem.set(k, next);
+
+  return clone(next);
 }
 
-/** =========================
- *  ✅ 강제 재생성(캐시 무시) API
- *  - 캐시와 TTL을 무시하고 최신 생성 결과를 저장·반환
- *  - 확장 필드도 포함하여 반환
- *  ========================= */
-export async function refreshCompanyBrief(company: string, role?: string | null): Promise<CompanyBrief> {
-  const key = { company: company.trim(), role: (role ?? null)?.trim?.() || null };
+/* ============================================================
+   수집/요약 레이어 (템플릿)
+============================================================ */
 
-  // 1) 새로 생성 (기본 요약)
-  const fresh = await generateBrief(key.company, key.role ?? undefined);
+/** 근거 모음 */
+type Evidence = {
+  aboutPages: Array<{ text: string; url: string; source: string }>;
+  careerPages: Array<{ text: string; url: string; source: string }>;
+  jobPosts: Array<{ text: string; url: string; source: string; date?: string }>;
+  reports: Array<{ text: string; url: string; source: string; date?: string }>;
+  news: Array<{ title: string; url: string; source: string; date?: string }>;
+};
 
-  // 2) DB 저장(기존 스키마 유지)
-  const saved = await prisma.companyBrief.upsert({
-    where: { company_role: key },
-    create: {
-      company: key.company,
-      role: key.role,
-      blurb: fresh.blurb,
-      bullets: fresh.bullets,
-    },
-    update: {
-      blurb: fresh.blurb,
-      bullets: fresh.bullets,
-    },
-  });
-
-  // 3) 반환 객체 기본값
-  const base: CompanyBrief = {
-    company: saved.company,
-    role: saved.role ?? undefined,
-    blurb: saved.blurb,
-    bullets: (saved.bullets as any[])?.map(String) ?? [],
-    updatedAt: saved.updatedAt.toISOString(),
+/** 회사별 자료 수집 — 실제 크롤러/검색으로 교체 */
+async function collectEvidence(company: string, role?: string | null): Promise<Evidence> {
+  // TODO: 여기에 공식 홈페이지/IR/채용공고/뉴스 수집 로직 연결
+  // - 반드시 url, source(도메인/매체명), date 포함!
+  // 아래는 데모용(출처 포함 예시)
+  return {
+    aboutPages: [],
+    careerPages: [],
+    jobPosts: [],
+    reports: [],
+    news: [],
   };
-
-  // 4) 확장 섹션(가치/문화/인재상/채용포인트/팁/출처) 생성 (환경변수에 따라)
-  if (ENABLE_ENRICH) {
-    try {
-      const enrich = await generateBrief(base.company, base.role);
-      base.values = enrich.values;
-      base.culture = enrich.culture;
-      base.talentTraits = enrich.talentTraits;
-      base.hiringFocus = enrich.hiringFocus;
-      base.resumeTips = enrich.resumeTips;
-      base.interviewTips = enrich.interviewTips;
-      base.sourceNotes = enrich.sourceNotes;
-    } catch (e) {
-      console.warn("[companyBrief] enrich generation failed:", e);
-    }
-  }
-
-  // 5) 실시간 뉴스 병합 (키 있으면)
-  try {
-    const live = await fetchCompanyNews(base.company);
-    if (live.length > 0) {
-      const dedup = new Map<string, BriefNews>();
-      live.forEach((n) => {
-        const k = `${n.title}|${n.url ?? ""}`;
-        if (!dedup.has(k)) dedup.set(k, n);
-      });
-      base.recent = Array.from(dedup.values());
-    }
-  } catch (e) {
-    console.warn("[companyBrief] news fetch failed:", e);
-  }
-
-  return base;
 }
 
-/** =========================
- *  ✅ 최근 업데이트된 회사 요약 목록
- *  (기존 스키마 유지: blurb/bullets만)
- *  ========================= */
-export async function listRecentCompanyBriefs(limit = 8): Promise<CompanyBrief[]> {
-  const rows = await prisma.companyBrief.findMany({
-    orderBy: { updatedAt: "desc" },
-    take: Math.min(Math.max(limit, 1), 20),
-  });
+/** 공통: 근거 합치기(문자열들만 뽑아 요약에 건네기) */
+function flattenTexts(list: Array<{ text: string }>) {
+  return list.map((x) => x.text).filter(Boolean).join("\n\n");
+}
 
-  return rows.map((r) => ({
-    company: r.company,
-    role: r.role ?? undefined,
-    blurb: r.blurb,
-    bullets: (r.bullets as any[])?.map(String) ?? [],
-    // 확장 필드는 목록 API에서는 생략(요청시 fetchCompanyBrief/refreshCompanyBrief 사용)
-    updatedAt: r.updatedAt.toISOString(),
-  }));
+/** (STRICT) 출처 있는 문장만 반환하도록 강제하는 요약기 — 실제 모델 연결 지점 */
+async function summarizeWithModel(
+  instruction: string,
+  corpus: string,
+  opts: { strict: boolean }
+): Promise<string[]> {
+  // TODO: OpenAI 등 모델 호출부 연결
+  // - 시스템 프롬프트 예:
+  //   “You must only use facts explicitly present in the provided sources. If a point is not present, output NOTHING.”
+  // 데모: 빈 배열 반환(출처 없으면 아무것도 생성하지 않음)
+  if (!corpus.trim()) return [];
+  // 임시: 1줄 요약 흉내(실제 서비스에선 모델 응답 파싱)
+  return instruction ? [instruction.slice(0, 40) + "…"] : [corpus.slice(0, 80) + "…"];
+}
+
+/** 섹션: 기본 요약 */
+async function summarizeBasic(
+  company: string,
+  role: string | null | undefined,
+  ev: Evidence,
+  { strict }: { strict: boolean }
+) {
+  const corpus = [flattenTexts(ev.aboutPages), flattenTexts(ev.reports)].join("\n\n");
+  const bullets = await summarizeWithModel("회사 핵심 요약을 최대 5개 불릿으로 작성", corpus, { strict });
+  const blurbArr = await summarizeWithModel("두 문장으로 한 문단 요약", corpus, { strict });
+  const blurb = blurbArr[0] ?? "";
+  const sourceNotes = gatherSources([ev.aboutPages, ev.reports]);
+  return { blurb, bullets, sourceNotes };
+}
+
+/** 섹션: 가치/문화/인재상 */
+async function summarizeValuesCultureTalent(
+  company: string,
+  role: string | null | undefined,
+  ev: Evidence,
+  { strict }: { strict: boolean }
+) {
+  const corpus = [flattenTexts(ev.aboutPages), flattenTexts(ev.careerPages), flattenTexts(ev.reports)].join("\n\n");
+  const values = await summarizeWithModel("‘핵심 가치’ 목록만 추출", corpus, { strict });
+  const culture = await summarizeWithModel("‘조직문화’ 항목만 추출", corpus, { strict });
+  const talentTraits = await summarizeWithModel("‘인재상’ 항목만 추출", corpus, { strict });
+  const sourceNotes = gatherSources([ev.aboutPages, ev.careerPages, ev.reports]);
+  return { values, culture, talentTraits, sourceNotes };
+}
+
+/** 섹션: 채용 포인트 */
+async function summarizeHiringPoints(
+  company: string,
+  role: string | null | undefined,
+  ev: Evidence,
+  { strict }: { strict: boolean }
+) {
+  const corpus = [flattenTexts(ev.jobPosts), flattenTexts(ev.careerPages)].join("\n\n");
+  const hiringFocus = await summarizeWithModel("채용에서 중요하게 보는 포인트만 추출", corpus, { strict });
+  const sourceNotes = gatherSources([ev.jobPosts, ev.careerPages]);
+  return { hiringFocus, sourceNotes };
+}
+
+/** 섹션: 팁 */
+async function summarizeTips(
+  company: string,
+  role: string | null | undefined,
+  ev: Evidence,
+  { strict }: { strict: boolean }
+) {
+  const corpus = [flattenTexts(ev.jobPosts), flattenTexts(ev.careerPages)].join("\n\n");
+  const resumeTips = await summarizeWithModel("서류 팁을 ‘- ’ 불릿으로", corpus, { strict });
+  const interviewTips = await summarizeWithModel("면접 팁을 ‘- ’ 불릿으로", corpus, { strict });
+  const sourceNotes = gatherSources([ev.jobPosts, ev.careerPages]);
+  return { resumeTips, interviewTips, sourceNotes };
+}
+
+/** 섹션: 뉴스(이미 출처형식이라 필터만 적용) */
+async function summarizeNews(
+  company: string,
+  ev: Evidence,
+  { strict }: { strict: boolean }
+) {
+  const items = (ev.news || []).filter((n) => n.title && (n.url || n.source));
+  // STRICT: 출처 없는 뉴스 제외
+  return strict ? items.filter((n) => n.url || n.source) : items;
+}
+
+/* ============================================================
+   후처리/검증
+============================================================ */
+
+/** 출처 문자열 묶음 만들기 */
+function gatherSources(groups: Array<Array<{ url?: string; source?: string }>>): string[] {
+  const bag = new Set<string>();
+  for (const g of groups) {
+    for (const x of g || []) {
+      const s = x.source || x.url;
+      if (s) bag.add(s);
+    }
+  }
+  return Array.from(bag);
+}
+
+/** STRICT: 출처 없는 텍스트 제거 / LOOSE: 경고 태그 */
+function sanitizeBriefInPlace(brief: CompanyBrief, { strict }: { strict: boolean }) {
+  const hasAnySource = (brief.sourceNotes && brief.sourceNotes.length > 0) || (brief.recent && brief.recent.length > 0);
+
+  const clean = (arr?: string[]) =>
+    (arr || []).map((s) => s.trim()).filter(Boolean);
+
+  // 기본
+  brief.bullets = clean(brief.bullets);
+  brief.values = clean(brief.values);
+  brief.culture = clean(brief.culture);
+  brief.talentTraits = clean(brief.talentTraits);
+  brief.hiringFocus = clean(brief.hiringFocus);
+  brief.resumeTips = clean(brief.resumeTips);
+  brief.interviewTips = clean(brief.interviewTips);
+
+  if (strict && !hasAnySource) {
+    // 출처가 전혀 없으면 본문성 텍스트를 비운다.
+    brief.blurb = "";
+    brief.bullets = [];
+    brief.values = [];
+    brief.culture = [];
+    brief.talentTraits = [];
+    brief.hiringFocus = [];
+    brief.resumeTips = [];
+    brief.interviewTips = [];
+  } else if (!strict && !hasAnySource) {
+    // 느슨 모드: 경고 태그 부착
+    const tag = (s: string) => s.endsWith(" [출처 불명]") ? s : `${s} [출처 불명]`;
+    brief.blurb = brief.blurb ? tag(brief.blurb) : "";
+    brief.bullets = (brief.bullets || []).map(tag);
+    brief.values = (brief.values || []).map(tag);
+    brief.culture = (brief.culture || []).map(tag);
+    brief.talentTraits = (brief.talentTraits || []).map(tag);
+    brief.hiringFocus = (brief.hiringFocus || []).map(tag);
+    brief.resumeTips = (brief.resumeTips || []).map(tag);
+    brief.interviewTips = (brief.interviewTips || []).map(tag);
+  }
+}
+
+/* ============================================================
+   유틸
+============================================================ */
+function clone<T>(x: T): T {
+  return JSON.parse(JSON.stringify(x));
+}
+function mergeUnique(a: string[] | undefined, b: string[] | undefined) {
+  const s = new Set<string>([...(a || []), ...(b || [])].map((x) => (x || "").trim()).filter(Boolean));
+  return Array.from(s);
 }

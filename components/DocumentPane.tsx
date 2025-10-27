@@ -46,7 +46,7 @@ function sanitizeHtml(html: string): string {
         el.replaceWith(text);
         return;
       }
-      Array.from(el.attributes).forEach(attr => {
+      Array.from((el as HTMLElement).attributes).forEach(attr => {
         const name = attr.name.toLowerCase();
         const isAllowedAttr =
           (el.tagName === "A" && (name === "href" || name === "target" || name === "rel")) ||
@@ -606,9 +606,9 @@ export default function DocumentPane({ docId }: { docId: string }) {
   return (
     <div className="p-0 bg-white">
       {/* 데스크톱: 좌우 2열, 모바일: 1열 */}
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col lg:flex-row">
+      <div className="mx-auto flex w/full max-w-[1600px] flex-col lg:flex-row">
         {/* 좌측(유연폭): 작성 영역 넓게 */}
-        <div className="min-h-[calc(100vh-64px)] flex-1 min-w-0 lg:border-r">
+        <div className="min-h-[calc(100vh-64px)] flex-1 min-w-0">
           <div ref={writerPaneRef} className="mx-auto max-w-5xl px-6 lg:px-10 py-8">
             <input
               className="w-full text-3xl font-semibold tracking-tight outline-none border-0 focus:ring-0 placeholder:text-gray-300"
@@ -740,9 +740,11 @@ export default function DocumentPane({ docId }: { docId: string }) {
           </div>
         </div>
 
-        {/* 우측 사이드 — ✅ AI 패널 (이중 라인 제거 + 잘림 방지) */}
+        {/* 우측 사이드 — ✅ AI 패널 (끊김 없는 좌측 1px 라인) */}
         <div className="hidden lg:block w-[360px] shrink-0">
-          <div className="sticky top-0 min-h-[100dvh] max-h-[100dvh] overflow-y-auto pr-2 scrollbar-gutter-stable bg-white shadow-[inset_1px_0_0_0_#E5E7EB]">
+          <div className="sticky top-0 min-h-[100dvh] max-h-[100dvh] overflow-y-auto pr-2 scrollbar-gutter-stable bg-white relative">
+            {/* 좌측 1px 구분선 – absolute로 정확히 바닥까지 */}
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gray-200" />
             <DocAiPanel
               company={companyTag}
               role={roleTag}
@@ -758,7 +760,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
         createPortal(
           <div
             className="fixed z-[9999]"
-            style={{ left: `${bannerCenterX}px`, transform: "translateX(-50%)", bottom: "112px" }} /* ⬆ 기존보다 16px 위 */
+            style={{ left: `${bannerCenterX}px`, transform: "translateX(-50%)", bottom: "112px" }}
           >
             <button
               onClick={() => {
