@@ -230,39 +230,43 @@ export default function DocAiPanel({
     await refreshSection(key);
   };
 
-  /* 공식 실패 시 혼합 자동 폴백 + 디버그로그 */
+  // ==== 교체: refreshSection (하드 타임아웃 12초, 실패시 에러 표시)
   const refreshSection = async (key: SectionKey, forceMixed = false) => {
     if (!company) return;
     const c = normalizeCompanyName(company);
     setSecLoading((p) => ({ ...p, [key]: true }));
     setSecError((p) => ({ ...p, [key]: null }));
+
+    const withTimeout = <T,>(p: Promise<T>, ms = 12000) =>
+      new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("요청이 오래 걸립니다. 잠시 후 다시 시도해주세요.")), ms);
+        p.then((v) => { clearTimeout(t); resolve(v); })
+        .catch((e) => { clearTimeout(t); reject(e); });
+      });
+
     try {
       const wantMixed = !!forceMixed;
-      // official: 엄격(STRICT), 비공식 소스 제외
-      const optsOfficial = { role, section: key, strict: true, includeCommunity: false } as const;
-      // mixed: 느슨, 블로그/커뮤니티 포함
-      const optsMixed = { role, section: key, strict: false, includeCommunity: true } as const;
+      const optsOfficial = { role, section: key, strict: true,  includeCommunity: false } as any;
+      const optsMixed    = { role, section: key, strict: false, includeCommunity: true  } as any;
 
-      log(`섹션 재생성 시작 [${key}] — 시도 모드: ${wantMixed ? "mixed(강제)" : "official"}`);
+      log(`섹션 재생성 시작 [${key}] — ${wantMixed ? "mixed(강제)" : "official"}`);
       let data: CompanyBrief | null = null;
+
+      // 1차
       try {
-        const refreshed = await refreshCompanyBrief(c, wantMixed ? optsMixed : optsOfficial);
+        const refreshed = await withTimeout((refreshCompanyBrief as any)(c, wantMixed ? optsMixed : optsOfficial));
         data = refreshed ?? null;
-        log(`refreshCompanyBrief(${wantMixed ? "mixed" : "official"}) 완료. 콘텐츠: ${hasAnyBriefContent(data) ? "있음" : "없음"}`);
       } catch (err: any) {
-        log(`refreshCompanyBrief 에러(${wantMixed ? "mixed" : "official"}): ${err?.message || String(err)}`);
-        data = null;
+        log(`refresh 실패(${wantMixed ? "mixed" : "official"}): ${err?.message || String(err)}`);
       }
 
+      // 폴백
       if (!hasAnyBriefContent(data) && !wantMixed) {
-        log(`공식 결과 비어있음 → 혼합 폴백 재시도 [${key}]`);
         try {
-          const second = await refreshCompanyBrief(c, optsMixed);
+          const second = await withTimeout((refreshCompanyBrief as any)(c, optsMixed));
           data = second ?? data;
-          log(`혼합 폴백 결과. 콘텐츠: ${hasAnyBriefContent(data) ? "있음" : "없음"}`);
           setLastFetchMode((p) => ({ ...p, [key]: hasAnyBriefContent(data) ? "mixed" : "official" }));
         } catch (err: any) {
-          log(`혼합 폴백 에러: ${err?.message || String(err)}`);
           setLastFetchMode((p) => ({ ...p, [key]: "official" }));
         }
       } else {
@@ -270,9 +274,8 @@ export default function DocAiPanel({
       }
 
       if (!data) {
-        log(`refresh 결과 없음 → fetchCompanyBrief로 대체 조회 [${key}]`);
-        data = await fetchCompanyBrief(c, role);
-        log(`fetchCompanyBrief 대체 조회 완료. 콘텐츠: ${hasAnyBriefContent(data) ? "있음" : "없음"}`);
+        // 마지막 안전망: fetch 캐시라도 보여주기
+        data = await withTimeout(fetchCompanyBrief(c, role));
       }
 
       setBrief((prev) => {
@@ -291,14 +294,14 @@ export default function DocAiPanel({
         return merged;
       });
       if (!open[key]) setOpen((p) => ({ ...p, [key]: true }));
-      log(`섹션 재생성 종료 [${key}]`);
     } catch (e: any) {
       setSecError((p) => ({ ...p, [key]: e?.message || "섹션 로딩 실패" }));
-      log(`섹션 재생성 실패 [${key}]: ${e?.message || e}`);
+      log(`섹션 실패 [${key}]: ${e?.message || e}`);
     } finally {
       setSecLoading((p) => ({ ...p, [key]: false }));
     }
   };
+
 
   /* ===== prompt context ===== */
   const briefText = useMemo(() => {
