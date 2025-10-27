@@ -10,6 +10,10 @@ import {
   type CompanyBrief,
 } from "@/app/actions/companyBrief";
 
+/* ===== 공통 타입 ===== */
+type SectionKey = "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news";
+type SourceMode = "official" | "mixed";
+
 /* ===== 유틸: 기업명 정규화 + 콘텐츠 존재 여부 ===== */
 function normalizeCompanyName(raw?: string) {
   if (!raw) return "";
@@ -76,14 +80,12 @@ export default function DocAiPanel({
   const [useContext, setUseContext] = useState(true);
 
   /* 출처 모드: official(공식/언론 위주), mixed(블로그/커뮤니티 포함) */
-  type SourceMode = "official" | "mixed";
   const [sourceMode, setSourceMode] = useState<SourceMode>("official");
 
   const [brief, setBrief] = useState<CompanyBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefErr, setBriefErr] = useState("");
 
-  type SectionKey = "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news";
   const SECTION_LABEL: Record<SectionKey, string> = {
     basic: "기본 회사 브리프",
     valuesCultureTalent: "핵심가치 · 조직문화 · 인재상",
@@ -144,12 +146,12 @@ export default function DocAiPanel({
         if (!hasAnyBriefContent(data)) {
           log("공식 데이터 비어있음 → 혼합(mixed) 폴백 시도: refreshCompanyBrief");
           try {
-            const mixed = await (refreshCompanyBrief as any)(c, {
+            const mixed = await refreshCompanyBrief(c, {
               role,
               section: "basic",
               strict: false,
               includeCommunity: true,
-            });
+            } as const);
             log(`혼합 폴백 결과. 콘텐츠 유무: ${hasAnyBriefContent(mixed) ? "있음" : "없음"}`);
             if (hasAnyBriefContent(mixed)) {
               data = mixed;
@@ -236,13 +238,15 @@ export default function DocAiPanel({
     setSecError((p) => ({ ...p, [key]: null }));
     try {
       const wantMixed = !!forceMixed;
-      const optsOfficial = { role, section: key, strict: true, includeCommunity: false } as any;
-      const optsMixed = { role, section: key, strict: false, includeCommunity: true } as any;
+      // official: 엄격(STRICT), 비공식 소스 제외
+      const optsOfficial = { role, section: key, strict: true, includeCommunity: false } as const;
+      // mixed: 느슨, 블로그/커뮤니티 포함
+      const optsMixed = { role, section: key, strict: false, includeCommunity: true } as const;
 
       log(`섹션 재생성 시작 [${key}] — 시도 모드: ${wantMixed ? "mixed(강제)" : "official"}`);
       let data: CompanyBrief | null = null;
       try {
-        const refreshed = await (refreshCompanyBrief as any)(c, wantMixed ? optsMixed : optsOfficial);
+        const refreshed = await refreshCompanyBrief(c, wantMixed ? optsMixed : optsOfficial);
         data = refreshed ?? null;
         log(`refreshCompanyBrief(${wantMixed ? "mixed" : "official"}) 완료. 콘텐츠: ${hasAnyBriefContent(data) ? "있음" : "없음"}`);
       } catch (err: any) {
@@ -253,7 +257,7 @@ export default function DocAiPanel({
       if (!hasAnyBriefContent(data) && !wantMixed) {
         log(`공식 결과 비어있음 → 혼합 폴백 재시도 [${key}]`);
         try {
-          const second = await (refreshCompanyBrief as any)(c, optsMixed);
+          const second = await refreshCompanyBrief(c, optsMixed);
           data = second ?? data;
           log(`혼합 폴백 결과. 콘텐츠: ${hasAnyBriefContent(data) ? "있음" : "없음"}`);
           setLastFetchMode((p) => ({ ...p, [key]: hasAnyBriefContent(data) ? "mixed" : "official" }));
@@ -476,6 +480,7 @@ export default function DocAiPanel({
               onClick={() => {
                 if (!brief) return;
                 const html = buildRichHtml(brief, sourceMode);
+                // 에디터에 리치 HTML 삽입 (호환용)
                 document.execCommand("insertHTML", false, html);
               }}
             >
@@ -507,11 +512,11 @@ export default function DocAiPanel({
                 try {
                   const c = normalizeCompanyName(company);
                   log(`수동 재생성(현재 출처 모드=${sourceMode})`);
-                  const data = await (refreshCompanyBrief as any)(c, {
+                  const data = await refreshCompanyBrief(c, {
                     role,
                     strict: sourceMode === "official",
                     includeCommunity: sourceMode !== "official",
-                  });
+                  } as const);
                   setBrief(data);
                   setLastFetchMode((p) => ({ ...p, basic: sourceMode }));
                 } finally {
@@ -639,7 +644,7 @@ export default function DocAiPanel({
                 <button
                   key={idx}
                   className="text-[11px] px-2 py-1 rounded-full border bg-white hover:bg-gray-50"
-                  title={r.blurb}
+                  title={r.blurb || ""}
                   onClick={() => replaceSelection(buildPlainBlock(r))}
                 >
                   {r.company}
@@ -658,16 +663,16 @@ export default function DocAiPanel({
 
 function Sections(props: {
   brief: CompanyBrief | null;
-  open: Partial<Record<"basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news", boolean>>;
-  secLoading: Partial<Record<any, boolean>>;
-  secError: Partial<Record<any, string | null>>;
-  toggle: (k: any) => void;
-  refreshSection: (k: any, forceMixed?: boolean) => void;
+  open: Partial<Record<SectionKey, boolean>>;
+  secLoading: Partial<Record<SectionKey, boolean>>;
+  secError: Partial<Record<SectionKey, string | null>>;
+  toggle: (k: SectionKey) => void;
+  refreshSection: (k: SectionKey, forceMixed?: boolean) => void;
   newsPage: number;
   setNewsPage: (fn: (p: number) => number) => void;
   NEWS_PAGE_SIZE: number;
-  sourceMode: "official" | "mixed";
-  lastFetchMode: Partial<Record<"basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news", "official" | "mixed">>;
+  sourceMode: SourceMode;
+  lastFetchMode: Partial<Record<SectionKey, SourceMode>>;
 }) {
   const {
     brief,
@@ -683,14 +688,8 @@ function Sections(props: {
     lastFetchMode,
   } = props;
 
-  const keys: ("basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news")[] = [
-    "basic",
-    "valuesCultureTalent",
-    "hiringPoints",
-    "tips",
-    "news",
-  ];
-  const LABEL: any = {
+  const keys: SectionKey[] = ["basic", "valuesCultureTalent", "hiringPoints", "tips", "news"];
+  const LABEL: Record<SectionKey, string> = {
     basic: "기본 회사 브리프",
     valuesCultureTalent: "핵심가치 · 조직문화 · 인재상",
     hiringPoints: "채용 포인트",
@@ -743,7 +742,7 @@ function Sections(props: {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void refreshSection(key as any, true);
+                        void refreshSection(key, true);
                       }}
                       className="text-xs rounded-md border px-2 py-1 hover:bg-gray-50"
                       title="블로그 포함 모드로 재시도"
@@ -754,7 +753,7 @@ function Sections(props: {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      void refreshSection(key as any);
+                      void refreshSection(key);
                     }}
                     className="text-xs rounded-md border px-2 py-1 hover:bg-gray-50"
                   >
@@ -785,14 +784,14 @@ function Sections(props: {
 }
 
 function renderSectionBody(
-  key: "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news",
+  key: SectionKey,
   brief: CompanyBrief | null,
   busy?: boolean,
   err?: string | null,
   newsPage?: number,
   NEWS_PAGE_SIZE?: number,
   setNewsPage?: (fn: (p: number) => number) => void,
-  sourceMode?: "official" | "mixed"
+  sourceMode?: SourceMode
 ) {
   if (busy) return <div className="text-sm text-gray-500 animate-pulse">불러오는 중…</div>;
   if (err) return <div className="text-sm text-rose-600">오류: {err}</div>;
@@ -849,11 +848,7 @@ function renderSectionBody(
   if (key === "basic") {
     const has = (brief.blurb && brief.blurb.trim()) || (brief.bullets && brief.bullets.length);
     if (!has)
-      return (
-        <div className="text-sm text-gray-500">
-          내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.
-        </div>
-      );
+      return <div className="text-sm text-gray-500">내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.</div>;
     return (
       <div className="prose max-w-none whitespace-pre-wrap break-words [&_p]:text-[13px] [&_li]:text-[13px]">
         {UnofficialBadge}
@@ -875,11 +870,7 @@ function renderSectionBody(
     if (brief.culture?.length) blocks.push(<ListBlock key="c" title="조직문화" items={brief.culture} />);
     if (brief.talentTraits?.length) blocks.push(<ListBlock key="t" title="인재상" items={brief.talentTraits} />);
     if (!blocks.length)
-      return (
-        <div className="text-sm text-gray-500">
-          내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.
-        </div>
-      );
+      return <div className="text-sm text-gray-500">내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.</div>;
     return (
       <div className="space-y-3">
         {UnofficialBadge}
@@ -890,11 +881,7 @@ function renderSectionBody(
 
   if (key === "hiringPoints") {
     if (!brief.hiringFocus?.length)
-      return (
-        <div className="text-sm text-gray-500">
-          내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.
-        </div>
-      );
+      return <div className="text-sm text-gray-500">내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.</div>;
     return (
       <div>
         {UnofficialBadge}
@@ -908,11 +895,7 @@ function renderSectionBody(
     if (brief.resumeTips?.length) blocks.push(<ListBlock key="r" title="서류 팁" items={brief.resumeTips} marker="-" />);
     if (brief.interviewTips?.length) blocks.push(<ListBlock key="i" title="면접 팁" items={brief.interviewTips} marker="-" />);
     if (!blocks.length)
-      return (
-        <div className="text-sm text-gray-500">
-          내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.
-        </div>
-      );
+      return <div className="text-sm text-gray-500">내용이 비어 있습니다. ‘블로그 포함 재시도’를 눌러 보세요.</div>;
     return (
       <div className="space-y-3">
         {UnofficialBadge}
@@ -941,7 +924,7 @@ function ListBlock({ title, items, marker = "•" }: { title: string; items: str
 
 /* ===== html builders ===== */
 
-function buildRichHtml(brief: CompanyBrief, mode: "official" | "mixed") {
+function buildRichHtml(brief: CompanyBrief, mode: SourceMode) {
   const vals = renderList("핵심 가치", brief.values);
   const cult = renderList("조직문화", brief.culture);
   const talent = renderList("인재상", brief.talentTraits);

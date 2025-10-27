@@ -32,13 +32,20 @@ export type CompanyBrief = {
 };
 
 type RefreshOpts =
-  | { role?: string | null; section?: "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news"; strict?: boolean }
+  | {
+      role?: string | null;
+      section?: "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news";
+      strict?: boolean;
+      /** 블로그/커뮤니티(비공식) 포함 여부 — true면 보조 출처로 함께 수집 */
+      includeCommunity?: boolean;
+    }
   | undefined;
 
 /* ============================================================
    캐시 (데모용) — 프로덕션에선 DB/Prisma로 교체
 ============================================================ */
 const mem = new Map<string, CompanyBrief>();
+// ⛏️ 오타 수정: 마지막에 누락된 "}" 추가
 const keyOf = (c: string, r?: string | null) => `${c.toLowerCase()}::${(r ?? "").toLowerCase()}`;
 
 /* ============================================================
@@ -92,12 +99,13 @@ export async function refreshCompanyBrief(
   const role = opts?.role ?? null;
   const strict = opts?.strict ?? true;
   const section = opts?.section;
+  const includeCommunity = !!opts?.includeCommunity;
 
   // 1) 기존 결과 불러오기
   const current = await fetchCompanyBrief(company, role);
 
   // 2) 자료 수집 (크롤링/검색/문서) — 반드시 “출처”를 함께 수집
-  const evidence = await collectEvidence(company, role);
+  const evidence = await collectEvidence(company, role, { includeCommunity });
 
   // 3) 섹션별 요약 생성(근거 전달)
   const next = clone(current);
@@ -154,18 +162,122 @@ type Evidence = {
   news: Array<{ title: string; url: string; source: string; date?: string }>;
 };
 
-/** 회사별 자료 수집 — 실제 크롤러/검색으로 교체 */
-async function collectEvidence(company: string, role?: string | null): Promise<Evidence> {
-  // TODO: 여기에 공식 홈페이지/IR/채용공고/뉴스 수집 로직 연결
-  // - 반드시 url, source(도메인/매체명), date 포함!
-  // 아래는 데모용(출처 포함 예시)
-  return {
+/** 회사별 자료 수집 */
+async function collectEvidence(
+  company: string,
+  role?: string | null,
+  opts?: { includeCommunity?: boolean }
+): Promise<Evidence> {
+  const out: Evidence = {
     aboutPages: [],
     careerPages: [],
     jobPosts: [],
     reports: [],
     news: [],
   };
+
+  // --- 0) 유틸/환경
+  const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
+  const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
+  const hasNaver = !!(NAVER_CLIENT_ID && NAVER_CLIENT_SECRET);
+
+  const safeFetchJson = async (url: string, init?: RequestInit & { timeoutMs?: number }) => {
+    const { timeoutMs = 8000, ...rest } = init || {};
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...rest, signal: ac.signal, cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const hostFromUrl = (u?: string) => {
+    try {
+      if (!u) return "";
+      const { hostname } = new URL(u);
+      return hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  };
+
+  // --- 1) 뉴스 (항상 시도)
+  if (hasNaver) {
+    try {
+      const url = new URL("https://openapi.naver.com/v1/search/news.json");
+      url.searchParams.set("query", company);
+      url.searchParams.set("display", "20");
+      url.searchParams.set("sort", "date");
+
+      const data = await safeFetchJson(url.toString(), {
+        headers: {
+          "X-Naver-Client-Id": NAVER_CLIENT_ID,
+          "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        },
+        timeoutMs: 7000,
+      });
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      out.news.push(
+        ...items.map((it: any) => {
+          const title = String(it?.title || "").replace(/<[^>]+>/g, "");
+          const link = String(it?.link || "");
+          const source = hostFromUrl(link) || "Naver News";
+          const date = it?.pubDate ? new Date(it.pubDate).toISOString() : undefined;
+          return { title, url: link, source, date };
+        })
+      );
+    } catch (e) {
+      console.warn("[companyBrief] Naver news fetch failed:", (e as Error).message);
+    }
+  } else {
+    console.warn("[companyBrief] NAVER_CLIENT_ID/SECRET not set — skipping news.");
+  }
+
+  // --- 2) 블로그/커뮤니티 (옵션)
+  if (opts?.includeCommunity && hasNaver) {
+    try {
+      const url = new URL("https://openapi.naver.com/v1/search/blog.json");
+      url.searchParams.set("query", company);
+      url.searchParams.set("display", "15");
+      url.searchParams.set("sort", "date");
+
+      const data = await safeFetchJson(url.toString(), {
+        headers: {
+          "X-Naver-Client-Id": NAVER_CLIENT_ID,
+          "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        },
+        timeoutMs: 7000,
+      });
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      out.news.push(
+        ...items.map((it: any) => {
+          const title = String(it?.title || "").replace(/<[^>]+>/g, "");
+          const link = String(it?.link || "");
+          const source = hostFromUrl(link) || "Naver Blog";
+          const date = it?.postdate
+            ? new Date(
+                `${String(it.postdate).slice(0, 4)}-${String(it.postdate).slice(4, 6)}-${String(
+                  it.postdate
+                ).slice(6, 8)}T00:00:00Z`
+              ).toISOString()
+            : undefined;
+          return { title, url: link, source, date };
+        })
+      );
+    } catch (e) {
+      console.warn("[companyBrief] Naver blog fetch failed:", (e as Error).message);
+    }
+  }
+
+  // --- 3) (선택) 공식 페이지/IR/채용공고/리포트 — 필요 시 여기에 확장
+  // - 이 부분은 도메인/역할별 크롤러 붙일 영역입니다. 현재는 빈 배열 유지.
+
+  return out;
 }
 
 /** 공통: 근거 합치기(문자열들만 뽑아 요약에 건네기) */
@@ -177,7 +289,7 @@ function flattenTexts(list: Array<{ text: string }>) {
 async function summarizeWithModel(
   instruction: string,
   corpus: string,
-  opts: { strict: boolean }
+  _opts: { strict: boolean }
 ): Promise<string[]> {
   // TODO: OpenAI 등 모델 호출부 연결
   // - 시스템 프롬프트 예:
@@ -190,8 +302,8 @@ async function summarizeWithModel(
 
 /** 섹션: 기본 요약 */
 async function summarizeBasic(
-  company: string,
-  role: string | null | undefined,
+  _company: string,
+  _role: string | null | undefined,
   ev: Evidence,
   { strict }: { strict: boolean }
 ) {
@@ -205,8 +317,8 @@ async function summarizeBasic(
 
 /** 섹션: 가치/문화/인재상 */
 async function summarizeValuesCultureTalent(
-  company: string,
-  role: string | null | undefined,
+  _company: string,
+  _role: string | null | undefined,
   ev: Evidence,
   { strict }: { strict: boolean }
 ) {
@@ -220,8 +332,8 @@ async function summarizeValuesCultureTalent(
 
 /** 섹션: 채용 포인트 */
 async function summarizeHiringPoints(
-  company: string,
-  role: string | null | undefined,
+  _company: string,
+  _role: string | null | undefined,
   ev: Evidence,
   { strict }: { strict: boolean }
 ) {
@@ -233,8 +345,8 @@ async function summarizeHiringPoints(
 
 /** 섹션: 팁 */
 async function summarizeTips(
-  company: string,
-  role: string | null | undefined,
+  _company: string,
+  _role: string | null | undefined,
   ev: Evidence,
   { strict }: { strict: boolean }
 ) {
@@ -247,7 +359,7 @@ async function summarizeTips(
 
 /** 섹션: 뉴스(이미 출처형식이라 필터만 적용) */
 async function summarizeNews(
-  company: string,
+  _company: string,
   ev: Evidence,
   { strict }: { strict: boolean }
 ) {
@@ -300,7 +412,7 @@ function sanitizeBriefInPlace(brief: CompanyBrief, { strict }: { strict: boolean
     brief.interviewTips = [];
   } else if (!strict && !hasAnySource) {
     // 느슨 모드: 경고 태그 부착
-    const tag = (s: string) => s.endsWith(" [출처 불명]") ? s : `${s} [출처 불명]`;
+    const tag = (s: string) => (s.endsWith(" [출처 불명]") ? s : `${s} [출처 불명]`);
     brief.blurb = brief.blurb ? tag(brief.blurb) : "";
     brief.bullets = (brief.bullets || []).map(tag);
     brief.values = (brief.values || []).map(tag);
