@@ -148,6 +148,9 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* 특수 업로드 타겟(학력/경력/프로젝트/추천사/연락처 로고/아바타) */
   const logoTargetRef = useRef<HTMLImageElement | null>(null);
   const quickMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const draggingSectionRef = useRef<HTMLElement | null>(null);
+  const dropIndicatorRef = useRef<HTMLDivElement | null>(null);
+  const dragPointerIdRef = useRef<number | null>(null);
 
   /* 내부 ref */
   const isFromEditorRef = useRef(false);
@@ -444,48 +447,52 @@ export default function DocumentPane({ docId }: { docId: string }) {
   }, []);
 
   /* ✅ 클릭 핸들링: 체크박스 + 디자인블록 조작 */
+  const closeAllBlockMenus = useCallback(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>("[data-editor-ui='handle-menu']").forEach((menu) => {
+      menu.classList.remove("flex");
+      if (!menu.classList.contains("hidden")) menu.classList.add("hidden");
+      menu.classList.add("pointer-events-none");
+      menu.classList.remove("pointer-events-auto");
+      menu.dataset.open = "0";
+    });
+  }, []);
+
   const handleEditorClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const t = (e.target as HTMLElement);
+    const t = e.target as HTMLElement;
     const action = t?.dataset?.action;
 
-    if (action === "block-delete" || action === "block-move-up" || action === "block-move-down") {
-      const block = t.closest<HTMLElement>("section[data-block]");
+    if (action !== "block-handle" && !t.closest("[data-editor-ui='handle-menu']")) {
+      closeAllBlockMenus();
+    }
+
+    if (action === "block-handle") {
+      e.preventDefault();
+      const section = t.closest<HTMLElement>("[data-block]");
+      if (!section || section.dataset.dragging === "1") return;
+      const menu = section.querySelector<HTMLElement>("[data-editor-ui='handle-menu']");
+      if (!menu) return;
+      const isOpen = menu.dataset.open === "1";
+      closeAllBlockMenus();
+      if (isOpen) return;
+      menu.dataset.open = "1";
+      menu.classList.remove("hidden");
+      menu.classList.remove("pointer-events-none");
+      menu.classList.add("pointer-events-auto");
+      menu.classList.add("flex");
+      return;
+    }
+
+    if (action === "block-delete") {
+      const block = t.closest<HTMLElement>("[data-block]");
       const root = editorRef.current;
       if (!block || !root) return;
-      if (action === "block-delete") {
-        block.remove();
-        root.focus();
-        afterInsert();
-        return;
-      }
-      if (action === "block-move-up") {
-        let prev = block.previousElementSibling as HTMLElement | null;
-        while (prev && !(prev.matches?.("section[data-block]"))) {
-          prev = prev.previousElementSibling as HTMLElement | null;
-        }
-        if (prev) {
-          prev.before(block);
-        } else {
-          root.insertBefore(block, root.firstChild);
-        }
-        root.focus();
-        afterInsert();
-        return;
-      }
-      if (action === "block-move-down") {
-        let next = block.nextElementSibling as HTMLElement | null;
-        while (next && !(next.matches?.("section[data-block]"))) {
-          next = next.nextElementSibling as HTMLElement | null;
-        }
-        if (next) {
-          next.after(block);
-        } else {
-          root.appendChild(block);
-        }
-        root.focus();
-        afterInsert();
-        return;
-      }
+      block.remove();
+      root.focus();
+      closeAllBlockMenus();
+      afterInsert();
+      return;
     }
 
     // 체크박스 토글
@@ -646,8 +653,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
       if (img) { logoTargetRef.current = img; fileInputRef.current?.click(); }
       return;
     }
-
-  }, []);
+  }, [closeAllBlockMenus]);
 
   /* PDF 내보내기 */
   const handleDownloadPDF = useCallback(() => {
@@ -746,36 +752,226 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const decorateBlocks = useCallback(() => {
     const root = editorRef.current;
     if (!root) return;
-    const sections = Array.from(root.querySelectorAll<HTMLElement>("section[data-block]"));
-    sections.forEach((section) => {
+
+    const autoWrappers = Array.from(root.querySelectorAll<HTMLElement>("[data-sc-wrapper='1']"));
+    autoWrappers.forEach((wrapper) => {
+      wrapper.querySelectorAll<HTMLElement>("[data-editor-ui]").forEach((ui) => ui.remove());
+      const parent = wrapper.parentElement;
+      if (!parent) return;
+      while (wrapper.firstChild) {
+        parent.insertBefore(wrapper.firstChild, wrapper);
+      }
+      wrapper.remove();
+    });
+
+    const autoWrapTags = new Set([
+      "P",
+      "H1",
+      "H2",
+      "H3",
+      "H4",
+      "H5",
+      "H6",
+      "UL",
+      "OL",
+      "PRE",
+      "BLOCKQUOTE",
+      "TABLE",
+      "DIV",
+      "SECTION",
+      "ARTICLE",
+      "HR",
+      "IMG",
+    ]);
+    const getAutoBlockType = (tagName: string) => {
+      switch (tagName) {
+        case "P":
+          return "paragraph";
+        case "H1":
+          return "heading1";
+        case "H2":
+          return "heading2";
+        case "H3":
+          return "heading3";
+        case "H4":
+          return "heading4";
+        case "H5":
+          return "heading5";
+        case "H6":
+          return "heading6";
+        case "UL":
+          return "list";
+        case "OL":
+          return "ordered-list";
+        case "PRE":
+          return "code";
+        case "BLOCKQUOTE":
+          return "quote";
+        case "TABLE":
+          return "table";
+        case "HR":
+          return "divider";
+        case "IMG":
+          return "image";
+        default:
+          return `auto-${tagName.toLowerCase()}`;
+      }
+    };
+
+    Array.from(root.children).forEach((node) => {
+      const el = node as HTMLElement;
+      if (!autoWrapTags.has(el.tagName)) return;
+      if (el.dataset.editorUi) return;
+      if (el.dataset.block) return;
+      if (el.getAttribute("data-block")) return;
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-block", getAutoBlockType(el.tagName));
+      wrapper.setAttribute("data-sc-wrapper", "1");
+      wrapper.classList.add("sc-block");
+      el.replaceWith(wrapper);
+      wrapper.appendChild(el);
+    });
+
+    const ensureIndicator = () => {
+      if (!dropIndicatorRef.current) {
+        const indicator = document.createElement("div");
+        indicator.setAttribute("data-editor-ui", "drop-indicator");
+        indicator.className = "pointer-events-none h-1 rounded-full bg-indigo-400 shadow-sm";
+        dropIndicatorRef.current = indicator;
+      }
+      return dropIndicatorRef.current!;
+    };
+    const listBlockElements = () =>
+      Array.from(root.children).filter(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && !!node.dataset.block && node.dataset.editorUi !== "drop-indicator"
+      );
+
+    const blocks = listBlockElements();
+    blocks.forEach((section) => {
       if (!section.dataset.scEnhanced) {
         section.dataset.scEnhanced = "1";
       }
       section.classList.add("relative", "group");
 
-      if (!section.querySelector<HTMLElement>("[data-editor-ui='handle']")) {
+      if (!section.querySelector<HTMLElement>("[data-editor-ui='block-highlight']")) {
         const highlight = document.createElement("div");
-        highlight.setAttribute("data-editor-ui", "handle");
-        highlight.setAttribute("data-role", "block-highlight");
+        highlight.setAttribute("data-editor-ui", "block-highlight");
         highlight.setAttribute("contenteditable", "false");
         highlight.className =
           "pointer-events-none absolute inset-0 rounded-xl border border-transparent transition duration-150 ease-out group-hover:border-indigo-200 group-hover:shadow-sm";
         section.appendChild(highlight);
       }
 
-      if (!section.querySelector<HTMLElement>("[data-editor-ui='toolbar']")) {
-        const toolbar = document.createElement("div");
-        toolbar.setAttribute("data-editor-ui", "toolbar");
-        toolbar.setAttribute("contenteditable", "false");
-        toolbar.className =
-          "pointer-events-auto absolute -left-11 top-3 hidden flex-col gap-1 rounded-lg border border-gray-200 bg-white/95 px-1.5 py-1.5 text-xs text-gray-600 shadow-lg ring-1 ring-black/5 group-hover:flex group-focus-within:flex";
-        toolbar.innerHTML = `
-          <button type="button" data-action="block-move-up" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200" title="위로 이동">↑</button>
-          <button type="button" data-action="block-move-down" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200" title="아래로 이동">↓</button>
-          <button type="button" data-action="block-delete" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-500 hover:border-rose-300 hover:text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-200" title="삭제">✕</button>
+      let handle = section.querySelector<HTMLButtonElement>("[data-editor-ui='handle']");
+      if (!handle) {
+        handle = document.createElement("button");
+        handle.type = "button";
+        handle.setAttribute("data-editor-ui", "handle");
+        handle.setAttribute("data-action", "block-handle");
+        handle.setAttribute("contenteditable", "false");
+        handle.className =
+          "pointer-events-auto absolute -left-12 top-2 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm transition-opacity duration-150 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-200";
+        handle.innerHTML = `
+          <span class="sr-only">블록 드래그</span>
+          <svg class="h-4 w-4 stroke-[1.8]" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor">
+            <path d="M7 4h6M7 10h6M7 16h6" stroke-linecap="round" />
+          </svg>
         `;
-        toolbar.addEventListener("mousedown", (ev) => ev.preventDefault());
-        section.appendChild(toolbar);
+        section.appendChild(handle);
+      }
+      if (handle && !handle.dataset.bound) {
+        handle.dataset.bound = "1";
+        const beginPointerDrag = (ev: PointerEvent) => {
+          if (ev.pointerType === "mouse" && ev.button !== 0) return;
+          const block = handle.closest<HTMLElement>("[data-block]");
+          if (!block || block !== section) return;
+          ev.preventDefault();
+          closeAllBlockMenus();
+          draggingSectionRef.current = block;
+          dragPointerIdRef.current = ev.pointerId ?? null;
+          block.dataset.dragging = "1";
+          block.classList.add("opacity-60");
+          const indicator = ensureIndicator();
+          indicator.style.margin = "6px 0";
+          block.parentElement?.insertBefore(indicator, block.nextSibling);
+          handle.setPointerCapture?.(ev.pointerId);
+        };
+        const updatePointerDrag = (ev: PointerEvent) => {
+          const block = draggingSectionRef.current;
+          if (!block) return;
+          if (dragPointerIdRef.current !== null && ev.pointerId !== dragPointerIdRef.current) return;
+          ev.preventDefault();
+          const indicator = ensureIndicator();
+          const blocksList = listBlockElements();
+          const cursorY = ev.clientY;
+          let reference: HTMLElement | null = null;
+          let placeBefore = false;
+          for (const candidate of blocksList) {
+            if (candidate === block) continue;
+            const rect = candidate.getBoundingClientRect();
+            if (cursorY < rect.top + rect.height / 2) {
+              reference = candidate;
+              placeBefore = true;
+              break;
+            }
+          }
+          if (!reference) {
+            reference = blocksList[blocksList.length - 1] ?? null;
+            placeBefore = false;
+          }
+          if (!reference || reference === block) {
+            return;
+          }
+          const parent = reference.parentElement;
+          if (!parent) return;
+          if (placeBefore) parent.insertBefore(indicator, reference);
+          else parent.insertBefore(indicator, reference.nextSibling);
+        };
+        const finishPointerDrag = (commit: boolean) => {
+          const block = draggingSectionRef.current;
+          const pointerId = dragPointerIdRef.current;
+          const indicator = dropIndicatorRef.current;
+          dragPointerIdRef.current = null;
+          draggingSectionRef.current = null;
+          if (pointerId !== null) handle.releasePointerCapture?.(pointerId);
+          if (block) {
+            block.classList.remove("opacity-60");
+            delete block.dataset.dragging;
+          }
+          if (commit && block && indicator && indicator.parentElement) {
+            indicator.parentElement.insertBefore(block, indicator);
+            requestAnimationFrame(() => {
+              isFromEditorRef.current = true;
+              setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+              editorRef.current?.focus();
+            });
+          }
+          if (indicator) {
+            indicator.remove();
+            dropIndicatorRef.current = null;
+          }
+        };
+        handle.addEventListener("pointerdown", beginPointerDrag);
+        handle.addEventListener("pointermove", updatePointerDrag);
+        handle.addEventListener("pointerup", () => finishPointerDrag(true));
+        handle.addEventListener("pointercancel", () => finishPointerDrag(false));
+      }
+      let menu = section.querySelector<HTMLElement>("[data-editor-ui='handle-menu']");
+      if (!menu) {
+        menu = document.createElement("div");
+        menu.setAttribute("data-editor-ui", "handle-menu");
+        menu.dataset.open = "0";
+        menu.className =
+          "pointer-events-none absolute -left-[72px] top-12 hidden flex-col gap-1 rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs text-gray-600 shadow-lg";
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.setAttribute("data-action", "block-delete");
+        deleteBtn.className =
+          "flex items-center gap-1 rounded-md border border-rose-100 bg-white px-3 py-1.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50";
+        deleteBtn.innerHTML = `<span aria-hidden="true">🗑</span><span>Delete</span>`;
+        menu.appendChild(deleteBtn);
+        section.appendChild(menu);
       }
     });
   }, []);
@@ -1269,7 +1465,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* ---------- ★ 신규 제안 블록들 (추가) ---------- */
   const insertJDMatrix = () => {
     insertHtmlAtCaret(`
-      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm">
+      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm" data-block="jd-matrix">
         <div class="mb-3 flex items-center justify-between">
           <h3 class="font-semibold">JD 매칭 매트릭스</h3>
           <span class="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-600">ATS 키워드 합계 <strong>0</strong></span>
@@ -1304,7 +1500,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertStarCard = () => {
     insertHtmlAtCaret(`
-      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm">
+      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm" data-block="star">
         <h3 class="font-semibold mb-3">STAR 케이스</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
           <div class="p-3 rounded-lg bg-gray-50">
@@ -1331,7 +1527,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertCareerTimeline = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="career-timeline">
         <h3 class="font-semibold mb-3">경력 타임라인</h3>
         <ol class="relative border-l border-gray-300 pl-5">
           <li class="mb-6">
@@ -1352,7 +1548,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertSkillBarsSection = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="skill-bars">
         <h3 class="font-semibold mb-3">스킬 숙련도</h3>
         <div class="space-y-3 text-sm">
           ${["TypeScript","Next.js","Prisma","Tailwind CSS"].map(name => `
@@ -1374,7 +1570,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertPortfolioGallery = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="portfolio-gallery">
         <h3 class="font-semibold mb-3">포트폴리오</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           ${Array.from({length:3}).map(()=>`
@@ -1394,7 +1590,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertOSSList = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="oss-list">
         <h3 class="font-semibold mb-3">오픈소스 / 사이드프로젝트</h3>
         <ul class="space-y-2 text-sm">
           <li class="p-3 border rounded-lg bg-white flex items-center justify-between">
@@ -1412,7 +1608,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertTalksPublications = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="talks">
         <h3 class="font-semibold mb-3">발표 · 출판</h3>
         <ul class="list-disc list-inside text-sm text-gray-700">
           <li>2024.11 DevConf – 세션 제목 (슬라이드/영상 링크)</li>
@@ -1425,7 +1621,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertAwardsTimeline = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="awards-timeline">
         <h3 class="font-semibold mb-3">수상</h3>
         <div class="flex flex-wrap gap-2">
           <span class="px-2 py-1 rounded-full text-xs bg-gray-100">2025 우수상</span>
@@ -1438,7 +1634,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertReferencesSimple = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="references">
         <h3 class="font-semibold mb-3">추천인</h3>
         <ul class="text-sm space-y-1">
           <li>홍길동 · 팀장 · email@example.com · 010-0000-0000</li>
@@ -1451,7 +1647,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertAvailabilityPrefs = () => {
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="availability">
         <h3 class="font-semibold mb-3">가용 시점 & 근무 선호</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div class="p-3 rounded-lg bg-gray-50">
@@ -1478,7 +1674,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertQRPortfolioHeader = () => {
     insertHtmlAtCaret(`
-      <header class="my-6 flex items-center justify-between p-4 rounded-xl border bg-white">
+      <header class="my-6 flex items-center justify-between p-4 rounded-xl border bg-white" data-block="qr-header">
         <div>
           <h2 class="text-xl font-bold">이름 (Name)</h2>
           <div class="text-sm text-gray-600">email@example.com · github.com/username · portfolio.site</div>
@@ -1491,7 +1687,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   const insertCoverLetterSnippets = () => {
     insertHtmlAtCaret(`
-      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm">
+      <section class="my-6 rounded-xl border border-gray-200 p-4 bg-white shadow-sm" data-block="cover-letter">
         <h3 class="font-semibold mb-3">커버레터 스니펫</h3>
         <div class="space-y-3 text-sm">
           <div>
@@ -1517,7 +1713,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     const keywords = raw.split(",").map(s => s.trim()).filter(Boolean);
     const chips = keywords.map(k => `<span class="px-2 py-1 rounded-full text-xs border bg-gray-50">${escapeHtml(k)}</span>`).join("");
     insertHtmlAtCaret(`
-      <section class="my-6">
+      <section class="my-6" data-block="ats-keywords">
         <h3 class="font-semibold mb-2">ATS 키워드</h3>
         <div class="flex flex-wrap gap-2">${chips || ""}</div>
       </section>
@@ -2347,8 +2543,25 @@ function getEditorHtml(ref: React.RefObject<HTMLDivElement>) {
   if (!root) return "";
   const clone = root.cloneNode(true) as HTMLElement;
   clone.querySelectorAll<HTMLElement>("[data-editor-ui]").forEach((el) => el.remove());
-  clone.querySelectorAll<HTMLElement>("section[data-block][data-sc-enhanced]").forEach((el) => {
+  clone.querySelectorAll<HTMLElement>("[data-block][data-sc-enhanced]").forEach((el) => {
     el.removeAttribute("data-sc-enhanced");
+    el.removeAttribute("data-dragging");
+    el.removeAttribute("data-drag-ready");
+    el.removeAttribute("draggable");
+  });
+  clone.querySelectorAll<HTMLElement>("[data-sc-wrapper='1']").forEach((wrapper) => {
+    wrapper.removeAttribute("data-sc-enhanced");
+    wrapper.removeAttribute("data-block");
+    wrapper.removeAttribute("data-sc-wrapper");
+    const parent = wrapper.parentElement;
+    if (!parent) {
+      wrapper.remove();
+      return;
+    }
+    while (wrapper.firstChild) {
+      parent.insertBefore(wrapper.firstChild, wrapper);
+    }
+    wrapper.remove();
   });
   return clone.innerHTML.trim();
 }
@@ -2403,3 +2616,4 @@ function insertHtmlAtCaret(html: string, editorRef: React.RefObject<HTMLDivEleme
 function fillPlaceholders(s: string, ctx: Record<string, string>) {
   return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (ctx[k] ?? ""));
 }
+
