@@ -13,6 +13,7 @@ import {
 /* ===== 공통 타입 ===== */
 type SectionKey = "basic" | "valuesCultureTalent" | "hiringPoints" | "tips" | "news";
 type SourceMode = "official" | "mixed";
+type SpeedMode = "fast" | "full";
 
 /* ===== 유틸: 기업명 정규화 + 콘텐츠 존재 여부 ===== */
 function normalizeCompanyName(raw?: string) {
@@ -48,6 +49,23 @@ function hasAnyBriefContent(b?: CompanyBrief | null) {
   );
 }
 
+/* ===== 섹션별 존재 여부 체크 ===== */
+function hasSectionContent(k: SectionKey, b?: CompanyBrief | null) {
+  if (!b) return false;
+  switch (k) {
+    case "basic":
+      return !!((b.blurb && b.blurb.trim()) || (b.bullets && b.bullets.length));
+    case "valuesCultureTalent":
+      return !!((b.values && b.values.length) || (b.culture && b.culture.length) || (b.talentTraits && b.talentTraits.length));
+    case "hiringPoints":
+      return !!(b.hiringFocus && b.hiringFocus.length);
+    case "tips":
+      return !!((b.resumeTips && b.resumeTips.length) || (b.interviewTips && b.interviewTips.length));
+    case "news":
+      return !!(b.recent && b.recent.length);
+  }
+}
+
 /* ===== 디버그 로거 ===== */
 type DebugEvent = { time: string; msg: string };
 function now() {
@@ -56,9 +74,6 @@ function now() {
 
 /**
  * DocAiPanel — 내부 클래스 미세조정 (패널 자체는 라인/스티키/높이계산 X)
- * - 좌측 경계선: (이중선 제거) 패널 자체는 라인/그림자 없음
- * - 세로 높이/스티키: 바깥 래퍼가 담당 (sticky+100dvh)
- * - 우측 잘림: scrollbar-gutter 예약 + 우측 내부 여백 보강
  */
 export default function DocAiPanel({
   company,
@@ -151,6 +166,7 @@ export default function DocAiPanel({
               section: "basic",
               strict: false,
               includeCommunity: true,
+              speed: "fast",
             } as const);
             log(`혼합 폴백 결과. 콘텐츠 유무: ${hasAnyBriefContent(mixed) ? "있음" : "없음"}`);
             if (hasAnyBriefContent(mixed)) {
@@ -168,7 +184,7 @@ export default function DocAiPanel({
         }
 
         if (!alive) return;
-        setBrief(data);
+        setBrief((prev) => safeMergeAll(prev, data));
         setOpen({});
         setSecLoading({});
         setSecError({});
@@ -213,95 +229,66 @@ export default function DocAiPanel({
 
   const ensureSectionLoaded = async (key: SectionKey) => {
     if (!company || !brief) return;
-    if (key === "basic") {
-      const has = (brief.blurb && brief.blurb.trim()) || (brief.bullets && brief.bullets.length);
-      if (has) return;
-    }
-    if (key === "valuesCultureTalent") {
-      const has =
-        (brief.values && brief.values.length) ||
-        (brief.culture && brief.culture.length) ||
-        (brief.talentTraits && brief.talentTraits.length);
-      if (has) return;
-    }
-    if (key === "hiringPoints" && brief.hiringFocus?.length) return;
-    if (key === "tips" && ((brief.resumeTips && brief.resumeTips.length) || (brief.interviewTips && brief.interviewTips.length))) return;
-    if (key === "news" && brief.recent?.length) return;
+    if (hasSectionContent(key, brief)) return;
     await refreshSection(key);
   };
 
-  // ==== 교체: refreshSection (하드 타임아웃 12초, 실패시 에러 표시)
-  const refreshSection = async (key: SectionKey, forceMixed = false) => {
+  // ==== 교체: refreshSection – 하드 타임아웃 20초 + SAFE_MERGE + speed 연결 ====
+  const refreshSection = async (key: SectionKey, forceMixed = false, speed: SpeedMode = "fast") => {
     if (!company) return;
     const c = normalizeCompanyName(company);
     setSecLoading((p) => ({ ...p, [key]: true }));
     setSecError((p) => ({ ...p, [key]: null }));
 
-    const withTimeout = <T,>(p: Promise<T>, ms = 12000) =>
+    const withTimeout = <T,>(p: Promise<T>, ms = 20000) =>
       new Promise<T>((resolve, reject) => {
         const t = setTimeout(() => reject(new Error("요청이 오래 걸립니다. 잠시 후 다시 시도해주세요.")), ms);
         p.then((v) => { clearTimeout(t); resolve(v); })
-        .catch((e) => { clearTimeout(t); reject(e); });
+         .catch((e) => { clearTimeout(t); reject(e); });
       });
 
     try {
       const wantMixed = !!forceMixed;
-      const optsOfficial = { role, section: key, strict: true,  includeCommunity: false } as any;
-      const optsMixed    = { role, section: key, strict: false, includeCommunity: true  } as any;
+      const optsOfficial = { role, section: key, strict: true,  includeCommunity: false, speed } as const;
+      const optsMixed    = { role, section: key, strict: false, includeCommunity: true,  speed } as const;
 
-      log(`섹션 재생성 시작 [${key}] — ${wantMixed ? "mixed(강제)" : "official"}`);
       let data: CompanyBrief | null = null;
 
       // 1차
       try {
-        const refreshed = await withTimeout((refreshCompanyBrief as any)(c, wantMixed ? optsMixed : optsOfficial));
+        const refreshed = await withTimeout(
+          refreshCompanyBrief(c, wantMixed ? optsMixed : optsOfficial)
+        );
         data = refreshed ?? null;
       } catch (err: any) {
-        log(`refresh 실패(${wantMixed ? "mixed" : "official"}): ${err?.message || String(err)}`);
+        console.warn("[DocAiPanel] refresh error:", err?.message || err);
       }
 
       // 폴백
-      if (!hasAnyBriefContent(data) && !wantMixed) {
+      if (!hasSectionContent(key, data) && !wantMixed) {
         try {
-          const second = await withTimeout((refreshCompanyBrief as any)(c, optsMixed));
+          const second = await withTimeout(refreshCompanyBrief(c, optsMixed));
           data = second ?? data;
-          setLastFetchMode((p) => ({ ...p, [key]: hasAnyBriefContent(data) ? "mixed" : "official" }));
-        } catch (err: any) {
+          setLastFetchMode((p) => ({ ...p, [key]: hasSectionContent(key, data) ? "mixed" : "official" }));
+        } catch {
           setLastFetchMode((p) => ({ ...p, [key]: "official" }));
         }
       } else {
         setLastFetchMode((p) => ({ ...p, [key]: wantMixed ? "mixed" : "official" }));
       }
 
-      if (!data) {
-        // 마지막 안전망: fetch 캐시라도 보여주기
-        data = await withTimeout(fetchCompanyBrief(c, role));
-      }
+      // 서버가 null/빈객체 주면 기존 fetch로 보완
+      if (!data) data = await withTimeout(fetchCompanyBrief(c, role));
 
-      setBrief((prev) => {
-        const base = prev ?? ({} as CompanyBrief);
-        const merged: CompanyBrief = {
-          ...base,
-          ...data!,
-          ...(key === "basic" ? { blurb: data!.blurb, bullets: data!.bullets } : {}),
-          ...(key === "valuesCultureTalent"
-            ? { values: data!.values, culture: data!.culture, talentTraits: data!.talentTraits }
-            : {}),
-          ...(key === "hiringPoints" ? { hiringFocus: data!.hiringFocus } : {}),
-          ...(key === "tips" ? { resumeTips: data!.resumeTips, interviewTips: data!.interviewTips } : {}),
-          ...(key === "news" ? { recent: data!.recent } : {}),
-        };
-        return merged;
-      });
+      // ✅ 섹션 단위 안전 머지 (빈 결과로 기존 값을 덮지 않음)
+      setBrief((prev) => safeMergeSection(prev, data!, key));
       if (!open[key]) setOpen((p) => ({ ...p, [key]: true }));
     } catch (e: any) {
       setSecError((p) => ({ ...p, [key]: e?.message || "섹션 로딩 실패" }));
-      log(`섹션 실패 [${key}]: ${e?.message || e}`);
     } finally {
       setSecLoading((p) => ({ ...p, [key]: false }));
     }
   };
-
 
   /* ===== prompt context ===== */
   const briefText = useMemo(() => {
@@ -361,7 +348,6 @@ export default function DocAiPanel({
 
   return (
     <>
-      {/* 내부: sticky/높이/라인 없음 (바깥 래퍼가 담당) */}
       <aside
         className="
           w-full flex-none
@@ -443,7 +429,7 @@ export default function DocAiPanel({
                     공식 출처가 부족합니다.{" "}
                     <button
                       className="underline underline-offset-2"
-                      onClick={() => refreshSection("basic", true)}
+                      onClick={() => refreshSection("basic", true, "full")}
                       title="블로그/커뮤니티 포함 모드로 재시도"
                     >
                       블로그 포함으로 재시도
@@ -457,7 +443,7 @@ export default function DocAiPanel({
                 아직 표시할 내용이 없습니다.{" "}
                 <button
                   className="underline underline-offset-2"
-                  onClick={() => refreshSection("basic", true)}
+                  onClick={() => refreshSection("basic", true, "full")}
                   title="블로그/커뮤니티 포함 모드로 재시도"
                 >
                   블로그 포함으로 재시도
@@ -483,8 +469,12 @@ export default function DocAiPanel({
               onClick={() => {
                 if (!brief) return;
                 const html = buildRichHtml(brief, sourceMode);
-                // 에디터에 리치 HTML 삽입 (호환용)
-                document.execCommand("insertHTML", false, html);
+                try {
+                  document.execCommand("insertHTML", false, html);
+                } catch {
+                  // execCommand 미지원 브라우저용: 텍스트로 대체
+                  replaceSelection(html);
+                }
               }}
             >
               문서에 삽입(리치)
@@ -497,7 +487,7 @@ export default function DocAiPanel({
                 try {
                   const c = normalizeCompanyName(company);
                   const data = await fetchCompanyBrief(c, role);
-                  setBrief(data);
+                  setBrief((prev) => safeMergeAll(prev, data));
                   setLastFetchMode((p) => ({ ...p, basic: "official" }));
                   log("수동 새로고침: fetchCompanyBrief(official) 완료");
                 } finally {
@@ -514,13 +504,14 @@ export default function DocAiPanel({
                 setBriefLoading(true);
                 try {
                   const c = normalizeCompanyName(company);
-                  log(`수동 재생성(현재 출처 모드=${sourceMode})`);
+                  log(`수동 재생성(현재 출처 모드=${sourceMode}, speed=full)`);
                   const data = await refreshCompanyBrief(c, {
                     role,
                     strict: sourceMode === "official",
                     includeCommunity: sourceMode !== "official",
+                    speed: "full",
                   } as const);
-                  setBrief(data);
+                  setBrief((prev) => safeMergeAll(prev, data));
                   setLastFetchMode((p) => ({ ...p, basic: sourceMode }));
                 } finally {
                   setBriefLoading(false);
@@ -670,7 +661,7 @@ function Sections(props: {
   secLoading: Partial<Record<SectionKey, boolean>>;
   secError: Partial<Record<SectionKey, string | null>>;
   toggle: (k: SectionKey) => void;
-  refreshSection: (k: SectionKey, forceMixed?: boolean) => void;
+  refreshSection: (k: SectionKey, forceMixed?: boolean, speed?: SpeedMode) => void;
   newsPage: number;
   setNewsPage: (fn: (p: number) => number) => void;
   NEWS_PAGE_SIZE: number;
@@ -745,7 +736,7 @@ function Sections(props: {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void refreshSection(key, true);
+                        void refreshSection(key, true, "full");
                       }}
                       className="text-xs rounded-md border px-2 py-1 hover:bg-gray-50"
                       title="블로그 포함 모드로 재시도"
@@ -756,7 +747,7 @@ function Sections(props: {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      void refreshSection(key);
+                      void refreshSection(key, false, "full");
                     }}
                     className="text-xs rounded-md border px-2 py-1 hover:bg-gray-50"
                   >
@@ -1043,4 +1034,57 @@ function formatDate(d?: string) {
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return d;
   return dt.toISOString().slice(0, 10);
+}
+
+/* ===== 안전 머지 유틸 ===== */
+
+// 섹션별 새 데이터가 비었으면 기존 섹션을 유지
+function safeMergeSection(prev: CompanyBrief | null, next: CompanyBrief, key: SectionKey): CompanyBrief {
+  const base = { ...(prev || {}), ...next } as CompanyBrief;
+
+  const keep = (cond: boolean, apply: () => void) => {
+    if (cond) apply();
+  };
+
+  switch (key) {
+    case "basic":
+      keep(!hasSectionContent("basic", next) && hasSectionContent("basic", prev), () => {
+        base.blurb = prev!.blurb;
+        base.bullets = prev!.bullets;
+      });
+      break;
+    case "valuesCultureTalent":
+      keep(!hasSectionContent("valuesCultureTalent", next) && hasSectionContent("valuesCultureTalent", prev), () => {
+        base.values = prev!.values;
+        base.culture = prev!.culture;
+        base.talentTraits = prev!.talentTraits;
+      });
+      break;
+    case "hiringPoints":
+      keep(!hasSectionContent("hiringPoints", next) && hasSectionContent("hiringPoints", prev), () => {
+        base.hiringFocus = prev!.hiringFocus;
+      });
+      break;
+    case "tips":
+      keep(!hasSectionContent("tips", next) && hasSectionContent("tips", prev), () => {
+        base.resumeTips = prev!.resumeTips;
+        base.interviewTips = prev!.interviewTips;
+      });
+      break;
+    case "news":
+      keep(!hasSectionContent("news", next) && hasSectionContent("news", prev), () => {
+        base.recent = prev!.recent;
+      });
+      break;
+  }
+  return base;
+}
+
+// 전체 병합(섹션별 비었으면 이전값 보존)
+function safeMergeAll(prev: CompanyBrief | null, next: CompanyBrief): CompanyBrief {
+  let merged = { ...(prev || {}), ...next } as CompanyBrief;
+  (["basic","valuesCultureTalent","hiringPoints","tips","news"] as SectionKey[]).forEach((k) => {
+    merged = safeMergeSection(prev, merged, k);
+  });
+  return merged;
 }
