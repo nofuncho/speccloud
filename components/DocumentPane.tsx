@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import type React from "react";
-import { useEffect, useState, useCallback, useRef, useMemo, useTransition } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, useTransition, useLayoutEffect } from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { renameDocument, saveDocumentJson } from "@/app/actions/folderActions";
@@ -2011,7 +2011,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
       <div className="mx-auto flex w-full max-w-[1600px] flex-col lg:flex-row">
         {/* 좌측(작성) */}
         <div className="min-h-[calc(100vh-64px)] flex-1 min-w-0">
-          <div ref={writerPaneRef} className="mx-auto max-w-5xl px-6 lg:px-10 py-8">
+          <div ref={writerPaneRef} data-writer-pane className="mx-auto max-w-5xl px-6 lg:px-10 py-8">
             <input
               className="w-full text-3xl font-semibold tracking-tight outline-none border-0 focus:ring-0 placeholder:text-gray-300"
               value={title}
@@ -2043,6 +2043,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
                 </ToolbarButton>
                 {quickOpen && (
                   <QuickAddMenu
+                    anchorRef={quickMenuContainerRef}
                     groups={quickActionGroups}
                     presets={presets}
                     onOpenTemplate={() => {
@@ -2178,15 +2179,49 @@ function QuickAddMenu({
   onOpenTemplate,
   onSavePreset,
   onPickPreset,
+  anchorRef,
 }: {
   groups: QuickActionGroup[];
   presets: { id: string; name: string }[];
   onOpenTemplate: () => void;
   onSavePreset: () => void;
   onPickPreset: (id: string) => void;
+  anchorRef: React.RefObject<HTMLDivElement>;
 }) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const anchor = anchorRef.current;
+    if (!menu || !anchor) return;
+    const pane = anchor.closest<HTMLElement>("[data-writer-pane]");
+    if (!pane) return;
+    const reposition = () => {
+      if (!menu || !pane) return;
+      menu.style.setProperty("--qa-offset-x", "0px");
+      const paneRect = pane.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const padding = 12;
+      let offset = 0;
+      const overflowLeft = paneRect.left + padding - menuRect.left;
+      if (overflowLeft > 0) offset += overflowLeft;
+      const overflowRight = menuRect.right - (paneRect.right - padding);
+      if (overflowRight > 0) offset -= overflowRight;
+      menu.style.setProperty("--qa-offset-x", `${offset}px`);
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("resize", reposition);
+    };
+  }, [anchorRef]);
+
   return (
-    <div className="absolute right-0 mt-2 w-[360px] max-w-[80vw] rounded-2xl border border-gray-200 bg-white shadow-2xl z-[2000]">
+    <div
+      ref={menuRef}
+      className="absolute right-0 mt-2 w-[360px] max-w-[80vw] rounded-2xl border border-gray-200 bg-white shadow-2xl z-[2000]"
+      style={{ transform: "translateX(var(--qa-offset-x, 0px))" }}
+    >
       <div className="px-4 py-3 border-b border-gray-100">
         <div className="text-sm font-semibold text-gray-900">빠른 추가</div>
         <div className="text-xs text-gray-500 mt-1">자주 쓰는 블록을 클릭해서 바로 삽입하세요.</div>
