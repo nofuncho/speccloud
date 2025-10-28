@@ -6,6 +6,46 @@ import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { renameDocument, saveDocumentJson } from "@/app/actions/folderActions";
 import { regenerateDocument } from "@/app/actions/regenerateActions";
+import {
+  Plus,
+  ChevronDown,
+  Heading2,
+  Type,
+  List,
+  Columns,
+  Table,
+  Wrench,
+  Languages,
+  ClipboardList,
+  Sparkles,
+  GraduationCap,
+  ScrollText,
+  IdCard,
+  KanbanSquare,
+  Rows4,
+  BarChart3,
+  Award,
+  MessageSquareQuote,
+  Contact as ContactIcon,
+  Grid3x3,
+  Stars,
+  History,
+  SlidersHorizontal,
+  GalleryHorizontal,
+  GitFork,
+  Mic,
+  Medal,
+  UsersRound,
+  CalendarClock,
+  QrCode,
+  NotebookPen,
+  Hash,
+  Target,
+  ListChecks,
+  LayoutTemplate,
+  Save,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 /* ✅ 태그 자동완성 + 메타 저장 */
 import TagCombobox from "@/components/TagCombobox";
@@ -45,6 +85,8 @@ type QuickBlock =
   | { kind: "exp-card" }             // ✅ 경력 카드형
   | { kind: "exp-row" };             // ✅ 경력 텍스트형
 type QuickTemplate = { id: string; name: string; tags?: string[]; blocks: QuickBlock[] };
+type QuickAction = { key: string; label: string; icon: LucideIcon; onClick: () => void; description?: string };
+type QuickActionGroup = { title: string; items: QuickAction[] };
 
 /* ---------- 유틸 공통 ---------- */
 const isCmdOrCtrl = (e: KeyboardEvent | React.KeyboardEvent) => (e.metaKey || e.ctrlKey);
@@ -105,6 +147,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   /* 특수 업로드 타겟(학력/경력/프로젝트/추천사/연락처 로고/아바타) */
   const logoTargetRef = useRef<HTMLImageElement | null>(null);
+  const quickMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
   /* 내부 ref */
   const isFromEditorRef = useRef(false);
@@ -403,6 +446,47 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* ✅ 클릭 핸들링: 체크박스 + 디자인블록 조작 */
   const handleEditorClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const t = (e.target as HTMLElement);
+    const action = t?.dataset?.action;
+
+    if (action === "block-delete" || action === "block-move-up" || action === "block-move-down") {
+      const block = t.closest<HTMLElement>("section[data-block]");
+      const root = editorRef.current;
+      if (!block || !root) return;
+      if (action === "block-delete") {
+        block.remove();
+        root.focus();
+        afterInsert();
+        return;
+      }
+      if (action === "block-move-up") {
+        let prev = block.previousElementSibling as HTMLElement | null;
+        while (prev && !(prev.matches?.("section[data-block]"))) {
+          prev = prev.previousElementSibling as HTMLElement | null;
+        }
+        if (prev) {
+          prev.before(block);
+        } else {
+          root.insertBefore(block, root.firstChild);
+        }
+        root.focus();
+        afterInsert();
+        return;
+      }
+      if (action === "block-move-down") {
+        let next = block.nextElementSibling as HTMLElement | null;
+        while (next && !(next.matches?.("section[data-block]"))) {
+          next = next.nextElementSibling as HTMLElement | null;
+        }
+        if (next) {
+          next.after(block);
+        } else {
+          root.appendChild(block);
+        }
+        root.focus();
+        afterInsert();
+        return;
+      }
+    }
 
     // 체크박스 토글
     if (t && t.tagName === "INPUT" && (t as HTMLInputElement).type === "checkbox") {
@@ -565,32 +649,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   }, []);
 
-  /* ✅ 붙여넣기 sanitize */
-  const handleEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    const html = e.clipboardData.getData("text/html");
-    const text = e.clipboardData.getData("text/plain");
-    if (html) {
-      e.preventDefault();
-      const clean = sanitizeHtml(html);
-      insertHtmlAtCaret(clean, editorRef);
-      isFromEditorRef.current = true;
-      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-    } else if (text) {
-      e.preventDefault();
-      const safe = safeHtml(text).replace(/\n/g, "<br>");
-      insertHtmlAtCaret(safe, editorRef);
-      isFromEditorRef.current = true;
-      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-    }
-  }, []);
-
-  /* 에디터 DOM 동기화 */
-  useEffect(() => {
-    const html = currentHtml;
-    if (!isFromEditorRef.current) setEditorHtml(editorRef, html);
-    isFromEditorRef.current = false;
-  }, [currentHtml]);
-
   /* PDF 내보내기 */
   const handleDownloadPDF = useCallback(() => {
     const htmlContent = currentHtml;
@@ -685,10 +743,77 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* =========================================================
      ✅ 이력서/자소서 특화 블록 삽입기 + 디자인형 섹션
   ========================================================= */
-  const afterInsert = () => {
+  const decorateBlocks = useCallback(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    const sections = Array.from(root.querySelectorAll<HTMLElement>("section[data-block]"));
+    sections.forEach((section) => {
+      if (!section.dataset.scEnhanced) {
+        section.dataset.scEnhanced = "1";
+      }
+      section.classList.add("relative", "group");
+
+      if (!section.querySelector<HTMLElement>("[data-editor-ui='handle']")) {
+        const highlight = document.createElement("div");
+        highlight.setAttribute("data-editor-ui", "handle");
+        highlight.setAttribute("data-role", "block-highlight");
+        highlight.setAttribute("contenteditable", "false");
+        highlight.className =
+          "pointer-events-none absolute inset-0 rounded-xl border border-transparent transition duration-150 ease-out group-hover:border-indigo-200 group-hover:shadow-sm";
+        section.appendChild(highlight);
+      }
+
+      if (!section.querySelector<HTMLElement>("[data-editor-ui='toolbar']")) {
+        const toolbar = document.createElement("div");
+        toolbar.setAttribute("data-editor-ui", "toolbar");
+        toolbar.setAttribute("contenteditable", "false");
+        toolbar.className =
+          "pointer-events-auto absolute -left-11 top-3 hidden flex-col gap-1 rounded-lg border border-gray-200 bg-white/95 px-1.5 py-1.5 text-xs text-gray-600 shadow-lg ring-1 ring-black/5 group-hover:flex group-focus-within:flex";
+        toolbar.innerHTML = `
+          <button type="button" data-action="block-move-up" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200" title="위로 이동">↑</button>
+          <button type="button" data-action="block-move-down" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200" title="아래로 이동">↓</button>
+          <button type="button" data-action="block-delete" class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-500 hover:border-rose-300 hover:text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-200" title="삭제">✕</button>
+        `;
+        toolbar.addEventListener("mousedown", (ev) => ev.preventDefault());
+        section.appendChild(toolbar);
+      }
+    });
+  }, []);
+
+  const afterInsert = useCallback(() => {
+    decorateBlocks();
     isFromEditorRef.current = true;
     setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-  };
+  }, [decorateBlocks]);
+
+  /* ✅ 붙여넣기 sanitize */
+  const handleEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    if (html) {
+      e.preventDefault();
+      const clean = sanitizeHtml(html);
+      insertHtmlAtCaret(clean, editorRef);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+      decorateBlocks();
+    } else if (text) {
+      e.preventDefault();
+      const safe = safeHtml(text).replace(/\n/g, "<br>");
+      insertHtmlAtCaret(safe, editorRef);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+      decorateBlocks();
+    }
+  }, [decorateBlocks]);
+
+  /* 에디터 DOM 동기화 */
+  useEffect(() => {
+    const html = currentHtml;
+    if (!isFromEditorRef.current) setEditorHtml(editorRef, html);
+    decorateBlocks();
+    isFromEditorRef.current = false;
+  }, [currentHtml, decorateBlocks]);
 
   const insertHeading = (text: string, level: 1 | 2 | 3 = 2) => {
     insertHtmlAtCaret(`<h${level} class="mt-4 mb-2 font-semibold">${escapeHtml(text)}</h${level}>`, editorRef);
@@ -1504,6 +1629,375 @@ export default function DocumentPane({ docId }: { docId: string }) {
   /* ✅ 빠른추가 패널/템플릿 모달 상태 */
   const [quickOpen, setQuickOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  useEffect(() => {
+    if (!quickOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      const container = quickMenuContainerRef.current;
+      if (container && !container.contains(e.target as Node)) {
+        setQuickOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setQuickOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [quickOpen]);
+  const quickActionGroups: QuickActionGroup[] = [
+    {
+      title: "기본 블록",
+      items: [
+        {
+          key: "heading",
+          label: "제목",
+          icon: Heading2,
+          description: "새 섹션 제목",
+          onClick: () => {
+            insertHeading("섹션 제목", 2);
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "paragraph",
+          label: "문단",
+          icon: Type,
+          description: "일반 텍스트",
+          onClick: () => {
+            insertParagraph("여기에 내용을 입력하세요.");
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "bullet",
+          label: "불릿",
+          icon: List,
+          description: "글머리 목록",
+          onClick: () => {
+            insertBullet(["항목 1", "항목 2", "항목 3"]);
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "two-col",
+          label: "2열 표",
+          icon: Columns,
+          description: "좌우 비교",
+          onClick: () => {
+            insertTwoCol(["좌측 항목 A", "좌측 항목 B", "우측 항목 A", "우측 항목 B"]);
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "profile-kv",
+          label: "프로필 표",
+          icon: Table,
+          description: "Key-Value",
+          onClick: () => {
+            insertKeyValue(["이름:", "연락처:", "이메일:", "GitHub:"]);
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "tools",
+          label: "툴 표",
+          icon: Wrench,
+          description: "툴 숙련도",
+          onClick: () => {
+            insertToolsTable();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "language",
+          label: "어학 표",
+          icon: Languages,
+          description: "어학/시험",
+          onClick: () => {
+            insertLanguageScoreTable();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "experience-basic",
+          label: "경력(기본)",
+          icon: ClipboardList,
+          description: "텍스트형 경력",
+          onClick: () => {
+            insertExperienceSection();
+            setQuickOpen(false);
+          },
+        },
+      ],
+    },
+    {
+      title: "핵심 섹션",
+      items: [
+        {
+          key: "skills",
+          label: "스킬 칩",
+          icon: Sparkles,
+          description: "칩 형태로 정리",
+          onClick: () => {
+            insertSkillSection();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "edu-card",
+          label: "학력 카드",
+          icon: GraduationCap,
+          description: "카드형 학력",
+          onClick: () => {
+            insertEducationCard();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "edu-row",
+          label: "학력 텍스트",
+          icon: ScrollText,
+          description: "텍스트형 학력",
+          onClick: () => {
+            insertEducationRow();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "exp-card",
+          label: "경력 카드",
+          icon: IdCard,
+          description: "카드형 경력",
+          onClick: () => {
+            insertExperienceCard();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "exp-row",
+          label: "경력 텍스트",
+          icon: ListChecks,
+          description: "텍스트형 경력",
+          onClick: () => {
+            insertExperienceRow();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "proj-card",
+          label: "프로젝트 카드",
+          icon: KanbanSquare,
+          description: "카드형 프로젝트",
+          onClick: () => {
+            insertProjectCard();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "proj-row",
+          label: "프로젝트 텍스트",
+          icon: Rows4,
+          description: "텍스트형 프로젝트",
+          onClick: () => {
+            insertProjectRow();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "kpi-grid",
+          label: "KPI 그리드",
+          icon: BarChart3,
+          description: "3칸 성과 그리드",
+          onClick: () => {
+            insertKPIGrid();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "awards-chip",
+          label: "수상 칩",
+          icon: Award,
+          description: "수상/자격 칩",
+          onClick: () => {
+            insertAwardsChips();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "quote-card",
+          label: "추천사 카드",
+          icon: MessageSquareQuote,
+          description: "레퍼런스 카드",
+          onClick: () => {
+            insertQuoteCard();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "contact-header",
+          label: "연락처 헤더",
+          icon: ContactIcon,
+          description: "프로필 헤더",
+          onClick: () => {
+            insertContactHeader();
+            setQuickOpen(false);
+          },
+        },
+      ],
+    },
+    {
+      title: "확장 블록",
+      items: [
+        {
+          key: "jd-matrix",
+          label: "JD 매트릭스",
+          icon: Grid3x3,
+          description: "요구사항 매칭",
+          onClick: () => {
+            insertJDMatrix();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "star-card",
+          label: "STAR 카드",
+          icon: Stars,
+          description: "STAR 구조",
+          onClick: () => {
+            insertStarCard();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "career-timeline",
+          label: "경력 타임라인",
+          icon: History,
+          description: "타임라인형",
+          onClick: () => {
+            insertCareerTimeline();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "skill-bars",
+          label: "스킬 바",
+          icon: SlidersHorizontal,
+          description: "숙련도 막대",
+          onClick: () => {
+            insertSkillBarsSection();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "portfolio-gallery",
+          label: "포트폴리오",
+          icon: GalleryHorizontal,
+          description: "갤러리 카드",
+          onClick: () => {
+            insertPortfolioGallery();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "oss-list",
+          label: "오픈소스",
+          icon: GitFork,
+          description: "OSS/사이드",
+          onClick: () => {
+            insertOSSList();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "talks",
+          label: "발표·출판",
+          icon: Mic,
+          description: "발표/콘텐츠",
+          onClick: () => {
+            insertTalksPublications();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "awards-timeline",
+          label: "수상 타임라인",
+          icon: Medal,
+          description: "연도별 수상",
+          onClick: () => {
+            insertAwardsTimeline();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "references",
+          label: "추천인",
+          icon: UsersRound,
+          description: "추천인 정보",
+          onClick: () => {
+            insertReferencesSimple();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "availability",
+          label: "가용/선호",
+          icon: CalendarClock,
+          description: "근무 선호",
+          onClick: () => {
+            insertAvailabilityPrefs();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "qr-header",
+          label: "QR 헤더",
+          icon: QrCode,
+          description: "QR 프로필",
+          onClick: () => {
+            insertQRPortfolioHeader();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "cover-snippets",
+          label: "커버레터",
+          icon: NotebookPen,
+          description: "자기소개서 조각",
+          onClick: () => {
+            insertCoverLetterSnippets();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "ats-keywords",
+          label: "ATS 키워드",
+          icon: Hash,
+          description: "키워드 뱅크",
+          onClick: () => {
+            insertATSKeywordBank();
+            setQuickOpen(false);
+          },
+        },
+        {
+          key: "kpi-badge",
+          label: "KPI 배지",
+          icon: Target,
+          description: "성과 배지",
+          onClick: () => {
+            const label = prompt("KPI 레이블(예: 전환율):");
+            if (!label) return;
+            const val = prompt("값/증감(예: +18% YoY):") || "";
+            insertHtmlAtCaret(makeKpiBadge(label, val), editorRef);
+            afterInsert();
+            setQuickOpen(false);
+          },
+        },
+      ],
+    },
+  ];
 
   /* 로딩/에러 */
   if (loading) return <div className="p-6 text-gray-500">문서 불러오는 중...</div>;
@@ -1534,6 +2028,36 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
             {/* 툴바 */}
             <div className="sticky top-2 z-10 mt-4 flex items-center gap-1 flex-wrap bg-white/70 backdrop-blur border rounded-xl px-1 py-1 shadow-sm select-none">
+              <div ref={quickMenuContainerRef} className="relative">
+                <ToolbarButton
+                  className="flex items-center gap-1 font-medium"
+                  onClick={() => setQuickOpen((v) => !v)}
+                  title="블록/템플릿 빠른 추가"
+                >
+                  <Plus size={16} strokeWidth={2.2} />
+                  <span className="hidden sm:inline">블록 추가</span>
+                  <ChevronDown
+                    size={14}
+                    className={"transition-transform duration-150 " + (quickOpen ? "rotate-180" : "")}
+                  />
+                </ToolbarButton>
+                {quickOpen && (
+                  <QuickAddMenu
+                    groups={quickActionGroups}
+                    presets={presets}
+                    onOpenTemplate={() => {
+                      setTemplateOpen(true);
+                      setQuickOpen(false);
+                    }}
+                    onSavePreset={saveSelectionAsPreset}
+                    onPickPreset={(id) => {
+                      insertPreset(id);
+                      setQuickOpen(false);
+                    }}
+                  />
+                )}
+              </div>
+              <ToolbarDivider />
               <ToolbarButton onClick={() => exec("bold")} title="굵게 (Ctrl/⌘+B)">B</ToolbarButton>
               <ToolbarButton onClick={() => exec("italic")} title="기울임 (Ctrl/⌘+I)">I</ToolbarButton>
               <ToolbarButton onClick={() => exec("underline")} title="밑줄 (Ctrl/⌘+U)">U</ToolbarButton>
@@ -1604,82 +2128,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
         </div>
       </div>
 
-      {/* ✅ 우하단 + 빠른추가 버튼 */}
-      <button
-        type="button"
-        onClick={() => setQuickOpen(v => !v)}
-        className="fixed bottom-6 right-6 z-[10000] w-12 h-12 rounded-full bg-white border shadow-lg text-2xl leading-none"
-        aria-label="블록 추가"
-        title="블록/템플릿 빠른 추가"
-      >+</button>
-
-      {/* ✅ 빠른추가 패널 */}
-      {quickOpen && (
-        <div className="fixed bottom-24 right-6 z-[10000] w-96 rounded-2xl border bg-white shadow-xl p-3 space-y-3">
-          <div className="text-sm font-semibold">빠른 추가</div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            {/* 기존 */}
-            <button className="border rounded-lg p-2" onClick={() => { insertHeading("섹션 제목", 2); setQuickOpen(false); }}>제목</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertParagraph("여기에 내용을 입력하세요."); setQuickOpen(false); }}>문단</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertBullet(["항목 1","항목 2","항목 3"]); setQuickOpen(false); }}>불릿</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertTwoCol(["좌측 항목 A","좌측 항목 B","우측 항목 A","우측 항목 B"]); setQuickOpen(false); }}>2열</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertKeyValue(["이름:","연락처:","이메일:","GitHub:"]); setQuickOpen(false); }}>프로필(KV)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertToolsTable(); setQuickOpen(false); }}>툴 표</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertLanguageScoreTable(); setQuickOpen(false); }}>어학 표</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertExperienceSection(); setQuickOpen(false); }}>경력(기본)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertSkillSection(); setQuickOpen(false); }}>스킬(칩)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertEducationCard(); setQuickOpen(false); }}>학력(카드)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertEducationRow(); setQuickOpen(false); }}>학력(텍스트)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertExperienceCard(); setQuickOpen(false); }}>경력(카드)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertExperienceRow(); setQuickOpen(false); }}>경력(텍스트)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertProjectCard(); setQuickOpen(false); }}>프로젝트(카드)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertProjectRow();  setQuickOpen(false); }}>프로젝트(텍스트)</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertKPIGrid();     setQuickOpen(false); }}>KPI 그리드</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertAwardsChips(); setQuickOpen(false); }}>수상/자격 칩</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertQuoteCard();   setQuickOpen(false); }}>추천사 카드</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertContactHeader(); setQuickOpen(false); }}>연락처 헤더</button>
-
-            {/* 신규(제안 블록) */}
-            <button className="border rounded-lg p-2" onClick={() => { insertJDMatrix(); setQuickOpen(false); }}>JD 매칭 매트릭스</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertStarCard(); setQuickOpen(false); }}>STAR 케이스 카드</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertCareerTimeline(); setQuickOpen(false); }}>경력 타임라인</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertSkillBarsSection(); setQuickOpen(false); }}>스킬 숙련도 바</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertPortfolioGallery(); setQuickOpen(false); }}>포트폴리오 갤러리</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertOSSList(); setQuickOpen(false); }}>OSS/사이드프로젝트</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertTalksPublications(); setQuickOpen(false); }}>발표·출판</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertAwardsTimeline(); setQuickOpen(false); }}>수상 타임라인</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertReferencesSimple(); setQuickOpen(false); }}>추천인 리스트</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertAvailabilityPrefs(); setQuickOpen(false); }}>가용/선호 표</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertQRPortfolioHeader(); setQuickOpen(false); }}>QR 포트폴리오 헤더</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertCoverLetterSnippets(); setQuickOpen(false); }}>커버레터 스니펫</button>
-            <button className="border rounded-lg p-2" onClick={() => { insertATSKeywordBank(); setQuickOpen(false); }}>ATS 키워드 뱅크</button>
-            <button className="border rounded-lg p-2" onClick={() => {
-              const label = prompt("KPI 레이블(예: 전환율):"); if (!label) return;
-              const val = prompt("값/증감(예: +18% YoY):") || "";
-              insertHtmlAtCaret(makeKpiBadge(label, val), editorRef); afterInsert(); setQuickOpen(false);
-            }}>KPI 배지(단축키)</button>
-          </div>
-
-          {/* 프리셋 */}
-          <div className="pt-2 border-t space-y-2">
-            <button className="w-full border rounded-lg p-2" onClick={() => { setTemplateOpen(true); setQuickOpen(false); }}>🧩 템플릿 선택…</button>
-            <button className="w-full border rounded-lg p-2" onClick={saveSelectionAsPreset}>💾 선택 영역을 프리셋으로 저장</button>
-            {presets.length > 0 && (
-              <div>
-                <div className="text-xs text-gray-500 mb-1">내 프리셋</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {presets.map(p => (
-                    <button key={p.id} className="border rounded-lg p-2 text-left truncate" onClick={() => { insertPreset(p.id); setQuickOpen(false); }}>
-                      {p.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* ✅ 템플릿 피커 (Portal) */}
       {mounted && templateOpen && createPortal(
         <TemplateModal onClose={() => setTemplateOpen(false)} templates={TEMPLATES} onPick={(t) => { applyTemplate(t); setTemplateOpen(false); }} />,
@@ -1724,6 +2172,98 @@ export default function DocumentPane({ docId }: { docId: string }) {
 }
 
 /* ---------- UI 소품 ---------- */
+function QuickAddMenu({
+  groups,
+  presets,
+  onOpenTemplate,
+  onSavePreset,
+  onPickPreset,
+}: {
+  groups: QuickActionGroup[];
+  presets: { id: string; name: string }[];
+  onOpenTemplate: () => void;
+  onSavePreset: () => void;
+  onPickPreset: (id: string) => void;
+}) {
+  return (
+    <div className="absolute right-0 mt-2 w-[360px] max-w-[80vw] rounded-2xl border border-gray-200 bg-white shadow-2xl z-[2000]">
+      <div className="px-4 py-3 border-b border-gray-100">
+        <div className="text-sm font-semibold text-gray-900">빠른 추가</div>
+        <div className="text-xs text-gray-500 mt-1">자주 쓰는 블록을 클릭해서 바로 삽입하세요.</div>
+      </div>
+      <div className="max-h-[70vh] overflow-y-auto px-3 py-3 space-y-4">
+        {groups.map((group) => (
+          <div key={group.title} className="space-y-2">
+            <div className="text-xs font-semibold text-gray-500 px-1">{group.title}</div>
+            <div className="grid grid-cols-2 gap-2">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.key}
+                    className="border border-gray-200 rounded-xl p-2 text-left hover:border-gray-300 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:ring-offset-1"
+                    onClick={item.onClick}
+                    type="button"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600">
+                        <Icon size={16} strokeWidth={2} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-gray-900 truncate">{item.label}</span>
+                        {item.description && <span className="block text-xs text-gray-500">{item.description}</span>}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <div className="space-y-2 border-t border-gray-100 pt-3">
+          <button
+            className="flex w-full items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-left text-sm font-medium hover:border-gray-300 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:ring-offset-1"
+            onClick={onOpenTemplate}
+            type="button"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600">
+              <LayoutTemplate size={16} strokeWidth={2} />
+            </span>
+            <span>템플릿 선택…</span>
+          </button>
+          <button
+            className="flex w-full items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-left text-sm font-medium hover:border-gray-300 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:ring-offset-1"
+            onClick={onSavePreset}
+            type="button"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600">
+              <Save size={16} strokeWidth={2} />
+            </span>
+            <span>선택 영역을 프리셋으로 저장</span>
+          </button>
+          {presets.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-gray-500 px-1">내 프리셋</div>
+              <div className="grid grid-cols-2 gap-2">
+                {presets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    className="truncate rounded-xl border border-gray-200 px-3 py-2 text-left text-sm hover:border-gray-300 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:ring-offset-1"
+                    onClick={() => onPickPreset(preset.id)}
+                    type="button"
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ToolbarButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const { className = "", ...rest } = props;
   return (
@@ -1767,7 +2307,16 @@ function TemplateModal({ onClose, templates, onPick }: { onClose: () => void; te
 }
 
 /* ---------- 유틸 ---------- */
-function getEditorHtml(ref: React.RefObject<HTMLDivElement>) { return (ref.current?.innerHTML || "").trim(); }
+function getEditorHtml(ref: React.RefObject<HTMLDivElement>) {
+  const root = ref.current;
+  if (!root) return "";
+  const clone = root.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll<HTMLElement>("[data-editor-ui]").forEach((el) => el.remove());
+  clone.querySelectorAll<HTMLElement>("section[data-block][data-sc-enhanced]").forEach((el) => {
+    el.removeAttribute("data-sc-enhanced");
+  });
+  return clone.innerHTML.trim();
+}
 function setEditorHtml(ref: React.RefObject<HTMLDivElement>, html: string) { if (ref.current) ref.current.innerHTML = html || ""; }
 function blockHtml(blocks: Block[]) {
   if (!blocks || blocks.length === 0) return "";
