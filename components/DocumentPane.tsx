@@ -1305,18 +1305,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const eduCardHtml = (f = defaultEduFields()) => `
     <section class="sc-edu mb-4" data-block="edu" data-variant="card">
       <div class="flex items-center gap-3">
-        <img data-field="logo" src="${f.logo}" alt="" class="w-9 h-9 rounded object-cover" />
+        <img data-field="logo" data-action="edu-upload-logo" src="${f.logo}" alt="" class="w-9 h-9 rounded object-cover cursor-pointer" />
         <div class="min-w-0">
           <div class="font-semibold">${escapeHtml(f.school)}</div>
           <div class="text-gray-500 text-sm whitespace-nowrap">${escapeHtml(f.period)} <span class="mx-2">·</span> ${escapeHtml(f.status)} <span class="mx-2">·</span> ${escapeHtml(f.major)}</div>
         </div>
       </div>
       <div class="text-sm text-gray-600 mt-2" data-field="detail" contenteditable="true">${escapeHtml(f.detail)}</div>
-      <div class="sc-edu-controls not-prose mt-2 flex gap-2">
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-variant" data-variant="card" contenteditable="false">카드형</button>
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-variant" data-variant="text" contenteditable="false">텍스트형</button>
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-upload-logo" contenteditable="false">로고</button>
-      </div>
       <div class="hidden" data-raw>
         <span data-field="school" contenteditable="true">${escapeHtml(f.school)}</span>
         <span data-field="period" contenteditable="true">${escapeHtml(f.period)}</span>
@@ -1339,11 +1334,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
         <span contenteditable="true" data-field="major">${escapeHtml(f.major)}</span>
       </div>
       <div class="text-sm text-gray-600 mt-1" contenteditable="true" data-field="detail">${escapeHtml(f.detail)}</div>
-      <div class="sc-edu-controls not-prose mt-2 flex gap-2">
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-variant" data-variant="card" contenteditable="false">카드형</button>
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-variant" data-variant="text" contenteditable="false">텍스트형</button>
-        <button class="border rounded px-2 py-1 text-xs bg-white" data-action="edu-upload-logo" contenteditable="false">로고</button>
-      </div>
       <img data-field="logo" src="${f.logo}" alt="" class="hidden" />
     </section>
   `;
