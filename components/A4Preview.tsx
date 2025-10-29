@@ -216,6 +216,8 @@ function sanitizeHtml(raw: string) {
     el.style.maxWidth = "100%";
     el.style.height = "auto";
   });
+  tmp.querySelectorAll<HTMLElement>("[data-editor-only]").forEach((el) => el.remove());
+  tmp.querySelectorAll<HTMLElement>("[data-action='add-skill']").forEach((el) => el.remove());
   tmp.querySelectorAll<HTMLElement>("[data-page-break]").forEach((el) => {
     const v = el.getAttribute("data-page-break");
     if (v === "before") (el as any).__pageBreakBefore = true;

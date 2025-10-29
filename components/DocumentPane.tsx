@@ -598,6 +598,12 @@ export default function DocumentPane({ docId }: { docId: string }) {
       menu.classList.remove("pointer-events-auto");
       menu.dataset.open = "0";
     });
+
+    root.querySelectorAll<HTMLElement>('[data-action="add-skill"]').forEach((btn) => {
+      if (!btn.dataset.editorOnly) {
+        btn.setAttribute("data-editor-only", "1");
+      }
+    });
   }, []);
 
   const afterInsert = useCallback(() => {
@@ -675,16 +681,39 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
     // ✅ 스킬: + 추가
     if (t?.dataset?.action === "add-skill") {
-      const val = prompt("추가할 스킬을 입력하세요");
-      if (!val) return;
       const btn = t;
-      const chip = document.createElement("span");
-      chip.className = "sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm";
-      chip.setAttribute("data-chip", "1");
-      chip.contentEditable = "true";
-      chip.textContent = val;
-      btn.before(chip);
-      afterInsert();
+      const parent = btn.parentElement;
+      if (!parent) return;
+      const block = btn.closest<HTMLElement>("[data-block]");
+      if (block?.dataset.block === "skills") {
+        const chips = Array.from(parent.querySelectorAll<HTMLElement>('[data-chip="1"]'));
+        const nextIndex = chips.length + 1;
+        const chip = document.createElement("span");
+        chip.className = "sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm";
+        chip.setAttribute("data-chip", "1");
+        chip.contentEditable = "true";
+        chip.textContent = `스킬${nextIndex}`;
+        btn.before(chip);
+        chip.focus();
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          const range = document.createRange();
+          range.selectNodeContents(chip);
+          sel.addRange(range);
+        }
+        afterInsert();
+      } else {
+        const val = prompt("추가할 항목을 입력하세요");
+        if (!val) return;
+        const chip = document.createElement("span");
+        chip.className = "sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm";
+        chip.setAttribute("data-chip", "1");
+        chip.contentEditable = "true";
+        chip.textContent = val;
+        btn.before(chip);
+        afterInsert();
+      }
       return;
     }
 
@@ -854,6 +883,11 @@ export default function DocumentPane({ docId }: { docId: string }) {
           th { background: #f9fafb; text-align: left; white-space: nowrap; }
           [data-page-break="before"] { break-before: page; }
           [data-page-break="after"]  { break-after: page; }
+          .sc-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+          .sc-chip { display: inline-flex; align-items: center; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 12px; background: #ffffff; font-size: 12px; line-height: 1.2; }
+          .sc-chip + .sc-chip { margin-left: 4px; }
+          .sc-chip-add { display: inline-flex; align-items: center; border: 1px dashed #e5e7eb; border-radius: 999px; padding: 4px 12px; background: #f9fafb; color: #6b7280; font-size: 12px; }
+          [data-editor-only], [data-action='add-skill'] { display: none !important; }
         </style>
       </head>
       <body>
@@ -1250,7 +1284,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
           <span class="sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm" data-chip="1" contenteditable="true">Notion</span>
           <span class="sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm" data-chip="1" contenteditable="true">Slack</span>
           <button class="sc-chip-add rounded-full border px-3 py-1 text-sm bg-white/70 hover:bg-white"
-                  contenteditable="false" data-action="add-skill">+ 추가</button>
+                  contenteditable="false" data-action="add-skill" data-editor-only="1">+ 추가</button>
         </div>
       </section>
     `;
@@ -1471,7 +1505,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
   <div class="sc-chip-list flex flex-wrap gap-2 mt-2">
     ${f.stack.map(s => `<span class="sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm" data-chip="1" contenteditable="true">${escapeHtml(s)}</span>`).join("")}
-    <button class="sc-chip-add rounded-full border px-3 py-1 text-sm bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill">+ 스택</button>
+    <button class="sc-chip-add rounded-full border px-3 py-1 text-sm bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill" data-editor-only="1">+ 스택</button>
   </div>
 
   <ol class="list-decimal pl-5 mt-2 space-y-1 text-[15px]" data-field="bullets">
@@ -1505,7 +1539,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
   <div class="text-sm text-gray-600 mt-1" data-field="desc" contenteditable="true">${escapeHtml(f.desc)}</div>
   <div class="sc-chip-list flex flex-wrap gap-2 mt-1">
     ${f.stack.map(s => `<span class="sc-chip inline-flex items-center rounded-full border px-2.5 py-0.5 text-[13px] bg-white" data-chip="1" contenteditable="true">${escapeHtml(s)}</span>`).join("")}
-    <button class="sc-chip-add rounded-full border px-3 py-1 text-xs bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill">+ 스택</button>
+    <button class="sc-chip-add rounded-full border px-3 py-1 text-xs bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill" data-editor-only="1">+ 스택</button>
   </div>
   <ol class="list-decimal pl-5 mt-1 space-y-1 text-[15px]" data-field="bullets">
     ${f.bullets.map(b => `<li contenteditable="true">${escapeHtml(b)}</li>`).join("")}
@@ -1578,7 +1612,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
         <div class="flex flex-wrap gap-2">
           <span class="sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm" data-chip="1" contenteditable="true">정보처리기사 (2024)</span>
           <span class="sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm" data-chip="1" contenteditable="true">TOEIC 900 (2023)</span>
-          <button class="sc-chip-add rounded-full border px-3 py-1 text-sm bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill">+ 추가</button>
+    <button class="sc-chip-add rounded-full border px-3 py-1 text-sm bg-white/70 hover:bg-white" contenteditable="false" data-action="add-skill" data-editor-only="1">+ 추가</button>
         </div>
       </section>
     `, editorRef);
@@ -2810,4 +2844,5 @@ function insertHtmlAtCaret(html: string, editorRef: React.RefObject<HTMLDivEleme
 function fillPlaceholders(s: string, ctx: Record<string, string>) {
   return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (ctx[k] ?? ""));
 }
+
 
