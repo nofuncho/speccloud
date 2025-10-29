@@ -685,14 +685,21 @@ export default function DocumentPane({ docId }: { docId: string }) {
       const parent = btn.parentElement;
       if (!parent) return;
       const block = btn.closest<HTMLElement>("[data-block]");
-      if (block?.dataset.block === "skills") {
+      const autoPrefixMap: Record<string, string> = {
+        skills: "스킬",
+        proj: "스택",
+        awards: "수상",
+      };
+      const blockType = block?.dataset.block ?? "";
+      const autoPrefix = autoPrefixMap[blockType];
+      if (autoPrefix) {
         const chips = Array.from(parent.querySelectorAll<HTMLElement>('[data-chip="1"]'));
         const nextIndex = chips.length + 1;
         const chip = document.createElement("span");
         chip.className = "sc-chip inline-flex items-center rounded-full border px-3 py-1 text-sm bg-white shadow-sm";
         chip.setAttribute("data-chip", "1");
         chip.contentEditable = "true";
-        chip.textContent = `스킬${nextIndex}`;
+        chip.textContent = `${autoPrefix}${nextIndex}`;
         btn.before(chip);
         chip.focus();
         const sel = window.getSelection();
@@ -1480,7 +1487,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
 <section class="sc-proj mb-4 p-3 border rounded-xl bg-white/80 shadow-sm" data-block="proj" data-variant="card">
   <div class="flex items-center justify-between gap-3">
     <div class="flex items-center gap-3 min-w-0">
-      <img data-field="logo" src="${f.logo}" alt="" class="w-9 h-9 rounded object-cover" />
+      <img data-field="logo" data-action="proj-upload-logo" src="${f.logo}" alt="" class="w-9 h-9 rounded object-cover cursor-pointer" />
       <div class="min-w-0">
         <div class="font-semibold text-[15px]" data-field="name" contenteditable="true">${escapeHtml(f.name)}</div>
         <div class="text-gray-500 text-xs whitespace-nowrap" data-field="period" contenteditable="true">${escapeHtml(f.period)}</div>
@@ -1506,14 +1513,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
     <a href="${escapeHtml(f.link)}" target="_blank" rel="noreferrer" data-field="link" contenteditable="true" class="text-blue-600 underline">프로젝트 링크</a>
   </div>
 
-  <div class="not-prose mt-3 flex flex-wrap gap-2">
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-add-bullet" contenteditable="false">+ 성과</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-variant" data-variant="card" contenteditable="false">카드형</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-variant" data-variant="text" contenteditable="false">텍스트형</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-upload-logo" contenteditable="false">로고</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-add-below" contenteditable="false">아래에 추가</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white text-rose-600" data-action="proj-delete" contenteditable="false">삭제</button>
-  </div>
 </section>
 `;
 
@@ -1535,14 +1534,6 @@ export default function DocumentPane({ docId }: { docId: string }) {
     ${f.bullets.map(b => `<li contenteditable="true">${escapeHtml(b)}</li>`).join("")}
   </ol>
   <a href="${escapeHtml(f.link)}" target="_blank" rel="noreferrer" data-field="link" contenteditable="true" class="text-blue-600 underline text-sm mt-1 inline-block">프로젝트 링크</a>
-  <div class="not-prose mt-2 flex flex-wrap gap-2">
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-add-bullet" contenteditable="false">+ 성과</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-variant" data-variant="card" contenteditable="false">카드형</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-variant" data-variant="text" contenteditable="false">텍스트형</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-upload-logo" contenteditable="false">로고</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white" data-action="proj-add-below" contenteditable="false">아래에 추가</button>
-    <button class="border rounded px-2 py-1 text-xs bg-white text-rose-600" data-action="proj-delete" contenteditable="false">삭제</button>
-  </div>
   <img data-field="logo" src="${f.logo}" alt="" class="hidden" />
 </section>
 `;
@@ -1615,19 +1606,15 @@ export default function DocumentPane({ docId }: { docId: string }) {
       <section class="sc-quote mb-4" data-block="quote">
         <div class="border rounded-xl p-3 bg-white/80 shadow-sm">
           <div class="flex items-center gap-3">
-            <img data-field="avatar" src="https://dummyimage.com/72x72/eaeaea/aaaaaa.png&text=R" class="w-9 h-9 rounded-full object-cover" />
+            <img data-field="avatar" data-action="quote-upload-avatar" src="https://dummyimage.com/72x72/eaeaea/aaaaaa.png&text=R" class="w-9 h-9 rounded-full object-cover cursor-pointer" />
             <div>
               <div class="font-semibold text-[15px]" contenteditable="true" data-field="name">홍길동 팀장</div>
               <div class="text-xs text-gray-500" contenteditable="true" data-field="meta">OO회사 / 전 상사</div>
             </div>
           </div>
-          <blockquote class="mt-2 text/[15px] text-gray-700" contenteditable="true" data-field="quote">
+          <blockquote class="mt-2 text-[15px] text-gray-700" contenteditable="true" data-field="quote">
 “함께 일하며 본 가장 강력한 문제 해결자였습니다. 일정/품질/커뮤니케이션을 모두 잡아냈습니다.”
           </blockquote>
-          <div class="not-prose mt-2 flex gap-2">
-            <button class="border rounded px-2 py-1 text-xs bg-white" data-action="quote-upload-avatar" contenteditable="false">아바타</button>
-            <button class="border rounded px-2 py-1 text-xs bg-white text-rose-600" data-action="quote-delete" contenteditable="false">삭제</button>
-          </div>
         </div>
       </section>
     `, editorRef);
@@ -1639,19 +1626,16 @@ export default function DocumentPane({ docId }: { docId: string }) {
     insertHtmlAtCaret(`
       <section class="sc-contact mb-5" data-block="contact">
         <div class="border rounded-2xl p-4 bg-white/80 shadow-sm flex items-center gap-4">
-          <img data-field="avatar" src="https://dummyimage.com/96x96/dadada/999999.png&text=U" class="w-14 h-14 rounded-full object-cover" />
+          <img data-field="avatar" data-action="contact-upload-avatar" src="https://dummyimage.com/96x96/dadada/999999.png&text=U" class="w-14 h-14 rounded-full object-cover cursor-pointer" />
           <div class="min-w-0">
             <div class="text-2xl font-bold" contenteditable="true" data-field="name">홍길동</div>
             <div class="text-sm text-gray-600" contenteditable="true" data-field="title">Product Manager · 서울</div>
             <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-700 mt-1">
-              <span contenteditable="true">📧 user@example.com</span>
+              <span contenteditable="true">✉️ user@example.com</span>
               <span contenteditable="true">📞 010-0000-0000</span>
-              <span contenteditable="true">🔗 github.com/username</span>
-              <span contenteditable="true">🕊️ @handle</span>
+              <span contenteditable="true">🌐 github.com/username</span>
+              <span contenteditable="true">🐦 @handle</span>
             </div>
-          </div>
-          <div class="not-prose ml-auto">
-            <button class="border rounded px-2 py-1 text-xs bg-white" data-action="contact-upload-avatar" contenteditable="false">사진</button>
           </div>
         </div>
       </section>
@@ -2834,5 +2818,14 @@ function insertHtmlAtCaret(html: string, editorRef: React.RefObject<HTMLDivEleme
 function fillPlaceholders(s: string, ctx: Record<string, string>) {
   return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (ctx[k] ?? ""));
 }
+
+
+
+
+
+
+
+
+
 
 
