@@ -151,6 +151,8 @@ export default function DocumentPane({ docId }: { docId: string }) {
   const draggingSectionRef = useRef<HTMLElement | null>(null);
   const dropIndicatorRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
+  const selectedBlockRef = useRef<HTMLElement | null>(null);
+  const decorateBlocksRef = useRef<() => void>(() => {});
 
   /* 내부 ref */
   const isFromEditorRef = useRef(false);
@@ -397,8 +399,109 @@ export default function DocumentPane({ docId }: { docId: string }) {
     return `<span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-300 bg-gray-50"><span class="opacity-70">${label}</span>${v}</span>`;
   };
 
+  const setSelectedBlock = useCallback((block: HTMLElement | null) => {
+    const prev = selectedBlockRef.current;
+    if (prev && prev !== block) {
+      prev.removeAttribute("data-editor-selected");
+    }
+    selectedBlockRef.current = block;
+    if (block) {
+      block.setAttribute("data-editor-selected", "1");
+    }
+  }, []);
+
+  const focusBlockContent = useCallback((block: HTMLElement) => {
+    const root = editorRef.current;
+    if (!root) return;
+    root.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    const target =
+      block.querySelector<HTMLElement>("[contenteditable='true']") ??
+      block.querySelector<HTMLElement>("p,li,div,span");
+    const range = document.createRange();
+    if (target) {
+      range.selectNodeContents(target);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(block);
+      range.collapse(true);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, []);
+
+  const ensureTrailingPlaceholder = useCallback((): HTMLElement | null => {
+    const root = editorRef.current;
+    if (!root) return null;
+    let placeholder = root.querySelector<HTMLElement>("[data-editor-placeholder='1']");
+    if (!placeholder) {
+      placeholder = createEmptyParagraphBlock();
+      placeholder.setAttribute("data-editor-placeholder", "1");
+      placeholder.classList.add("sc-block-placeholder");
+      root.appendChild(placeholder);
+      decorateBlocksRef.current();
+    }
+    const p = placeholder.querySelector("p");
+    if (p && p.innerHTML.trim() === "") {
+      p.innerHTML = "<br>";
+    }
+    return placeholder;
+  }, []);
+
+  const insertEmptyParagraphAfter = useCallback(
+    (reference?: HTMLElement | null) => {
+      const root = editorRef.current;
+      if (!root) return null;
+      const block = createEmptyParagraphBlock();
+      if (reference && reference.parentElement === root) {
+        root.insertBefore(block, reference.nextSibling);
+      } else {
+        root.appendChild(block);
+      }
+      decorateBlocksRef.current();
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+      requestAnimationFrame(() => {
+        focusBlockContent(block);
+        ensureTrailingPlaceholder();
+      });
+      return block;
+    },
+    [ensureTrailingPlaceholder, focusBlockContent]
+  );
+
+  const removeBlockElement = useCallback(
+    (block: HTMLElement) => {
+      const root = editorRef.current;
+      if (!root || !root.contains(block)) return;
+      const nextSibling = block.nextElementSibling as HTMLElement | null;
+      const prevSibling = block.previousElementSibling as HTMLElement | null;
+      block.remove();
+      setSelectedBlock(null);
+      isFromEditorRef.current = true;
+      setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+      requestAnimationFrame(() => {
+        const candidate =
+          (nextSibling && nextSibling.isConnected && nextSibling.dataset.editorPlaceholder !== "1"
+            ? nextSibling
+            : prevSibling && prevSibling.isConnected
+              ? prevSibling
+              : ensureTrailingPlaceholder()) ?? null;
+        if (candidate) focusBlockContent(candidate);
+      });
+    },
+    [ensureTrailingPlaceholder, focusBlockContent, setSelectedBlock]
+  );
+
   /* 키 핸들링 */
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (selectedBlockRef.current && (e.key === "Delete" || e.key === "Backspace")) {
+      e.preventDefault();
+      const target = selectedBlockRef.current;
+      if (target) removeBlockElement(target);
+      return;
+    }
     if (isCmdOrCtrl(e) && e.key.toLowerCase() === "s") { e.preventDefault(); void saveNow(); return; }
     if (isCmdOrCtrl(e) && e.key.toLowerCase() === "b") { e.preventDefault(); exec("bold"); }
     if (isCmdOrCtrl(e) && e.key.toLowerCase() === "i") { e.preventDefault(); exec("italic"); }
@@ -431,20 +534,58 @@ export default function DocumentPane({ docId }: { docId: string }) {
       if (text === "- [ ]" || text === "[]") { e.preventDefault(); block.textContent = ""; insertTodo(); return; }
     }
 
+    if (e.key === "Enter" && !e.shiftKey) {
+      const sel = window.getSelection(); if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      const anchorNode = range.startContainer;
+      const anchorEl = anchorNode instanceof HTMLElement ? anchorNode : anchorNode.parentElement;
+      const root = editorRef.current;
+      const block = anchorEl?.closest<HTMLElement>("[data-block]") ?? null;
+      const innerEditable = anchorEl?.closest("[contenteditable='true']");
+      const isInsideEditable = innerEditable && innerEditable !== root;
+      if (!isInsideEditable) {
+        e.preventDefault();
+        if (block && block.dataset.editorPlaceholder === "1") {
+          block.removeAttribute("data-editor-placeholder");
+          block.classList.remove("sc-block-placeholder");
+          isFromEditorRef.current = true;
+          setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+          requestAnimationFrame(() => {
+            focusBlockContent(block);
+            ensureTrailingPlaceholder();
+          });
+        } else {
+          insertEmptyParagraphAfter(block ?? null);
+        }
+        return;
+      }
+    }
+
     if (e.key === "Enter") {
       const sel = window.getSelection(); if (!sel || sel.rangeCount === 0) return;
       const range = sel.getRangeAt(0); const block = closestBlock(range.startContainer as HTMLElement); if (!block) return;
       const text = block.textContent || "";
       if (text.trim() === "```") { e.preventDefault(); block.textContent = ""; toggleCodeBlock(); }
     }
-  }, [exec, toggleCodeBlock, slashOpen, insertTodo, saveNow]);
+  }, [ensureTrailingPlaceholder, exec, focusBlockContent, insertEmptyParagraphAfter, insertTodo, removeBlockElement, saveNow, slashOpen, toggleCodeBlock]);
 
   /* 에디터 입력 → 상태 반영 */
   const handleEditorInput = useCallback(() => {
     isFromEditorRef.current = true;
+    const root = editorRef.current;
+    if (root) {
+      root.querySelectorAll<HTMLElement>("[data-editor-placeholder='1']").forEach((el) => {
+        if ((el.textContent || "").trim().length > 0) {
+          el.removeAttribute("data-editor-placeholder");
+          el.classList.remove("sc-block-placeholder");
+        }
+      });
+    }
+    ensureTrailingPlaceholder();
+    setSelectedBlock(null);
     const html = getEditorHtml(editorRef);
     setBlocks([{ type: "doc", html }]);
-  }, []);
+  }, [ensureTrailingPlaceholder, setSelectedBlock]);
 
   /* ✅ 클릭 핸들링: 체크박스 + 디자인블록 조작 */
   const closeAllBlockMenus = useCallback(() => {
@@ -459,19 +600,49 @@ export default function DocumentPane({ docId }: { docId: string }) {
     });
   }, []);
 
+  const afterInsert = useCallback(() => {
+    decorateBlocksRef.current();
+    isFromEditorRef.current = true;
+    setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
+    requestAnimationFrame(() => ensureTrailingPlaceholder());
+  }, [ensureTrailingPlaceholder]);
+
   const handleEditorClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const root = editorRef.current;
+    if (!root) return;
     const t = e.target as HTMLElement;
     const action = t?.dataset?.action;
+    const block = t.closest<HTMLElement>("[data-block]");
+    const fromHandleMenu = !!t.closest("[data-editor-ui='handle-menu']");
+    const isHighlight = t.dataset.editorUi === "block-highlight";
 
-    if (action !== "block-handle" && !t.closest("[data-editor-ui='handle-menu']")) {
+    if (!block) {
       closeAllBlockMenus();
+      setSelectedBlock(null);
+      const placeholder = ensureTrailingPlaceholder();
+      if (placeholder) {
+        e.preventDefault();
+        requestAnimationFrame(() => focusBlockContent(placeholder));
+      }
+      return;
+    }
+
+    if (isHighlight) {
+      e.preventDefault();
+      setSelectedBlock(block);
+      return;
+    }
+
+    if (action !== "block-handle" && !fromHandleMenu) {
+      closeAllBlockMenus();
+      setSelectedBlock(null);
     }
 
     if (action === "block-handle") {
       e.preventDefault();
-      const section = t.closest<HTMLElement>("[data-block]");
-      if (!section || section.dataset.dragging === "1") return;
-      const menu = section.querySelector<HTMLElement>("[data-editor-ui='handle-menu']");
+      if (block.dataset.dragging === "1") return;
+      setSelectedBlock(block);
+      const menu = block.querySelector<HTMLElement>("[data-editor-ui='handle-menu']");
       if (!menu) return;
       const isOpen = menu.dataset.open === "1";
       closeAllBlockMenus();
@@ -485,13 +656,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
     }
 
     if (action === "block-delete") {
-      const block = t.closest<HTMLElement>("[data-block]");
-      const root = editorRef.current;
-      if (!block || !root) return;
-      block.remove();
-      root.focus();
-      closeAllBlockMenus();
-      afterInsert();
+      removeBlockElement(block);
       return;
     }
 
@@ -653,7 +818,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
       if (img) { logoTargetRef.current = img; fileInputRef.current?.click(); }
       return;
     }
-  }, [closeAllBlockMenus]);
+  }, [afterInsert, closeAllBlockMenus, ensureTrailingPlaceholder, focusBlockContent, removeBlockElement, setSelectedBlock]);
 
   /* PDF 내보내기 */
   const handleDownloadPDF = useCallback(() => {
@@ -849,6 +1014,13 @@ export default function DocumentPane({ docId }: { docId: string }) {
 
     const blocks = listBlockElements();
     blocks.forEach((section) => {
+      if (section.dataset.editorPlaceholder === "1") {
+        section.classList.add("sc-block-placeholder");
+        section.querySelectorAll<HTMLElement>("[data-editor-ui]").forEach((el) => el.remove());
+        return;
+      } else {
+        section.classList.remove("sc-block-placeholder");
+      }
       if (!section.dataset.scEnhanced) {
         section.dataset.scEnhanced = "1";
       }
@@ -941,6 +1113,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
           }
           if (commit && block && indicator && indicator.parentElement) {
             indicator.parentElement.insertBefore(block, indicator);
+            setSelectedBlock(block);
             requestAnimationFrame(() => {
               isFromEditorRef.current = true;
               setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
@@ -975,12 +1148,7 @@ export default function DocumentPane({ docId }: { docId: string }) {
       }
     });
   }, []);
-
-  const afterInsert = useCallback(() => {
-    decorateBlocks();
-    isFromEditorRef.current = true;
-    setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-  }, [decorateBlocks]);
+  decorateBlocksRef.current = decorateBlocks;
 
   /* ✅ 붙여넣기 sanitize */
   const handleEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -992,24 +1160,29 @@ export default function DocumentPane({ docId }: { docId: string }) {
       insertHtmlAtCaret(clean, editorRef);
       isFromEditorRef.current = true;
       setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-      decorateBlocks();
+      setSelectedBlock(null);
+      decorateBlocksRef.current();
+      requestAnimationFrame(() => ensureTrailingPlaceholder());
     } else if (text) {
       e.preventDefault();
       const safe = safeHtml(text).replace(/\n/g, "<br>");
       insertHtmlAtCaret(safe, editorRef);
       isFromEditorRef.current = true;
       setBlocks([{ type: "doc", html: getEditorHtml(editorRef) }]);
-      decorateBlocks();
+      setSelectedBlock(null);
+      decorateBlocksRef.current();
+      requestAnimationFrame(() => ensureTrailingPlaceholder());
     }
-  }, [decorateBlocks]);
+  }, [ensureTrailingPlaceholder, setSelectedBlock]);
 
   /* 에디터 DOM 동기화 */
   useEffect(() => {
     const html = currentHtml;
     if (!isFromEditorRef.current) setEditorHtml(editorRef, html);
     decorateBlocks();
+    ensureTrailingPlaceholder();
     isFromEditorRef.current = false;
-  }, [currentHtml, decorateBlocks]);
+  }, [currentHtml, decorateBlocks, ensureTrailingPlaceholder]);
 
   const insertHeading = (text: string, level: 1 | 2 | 3 = 2) => {
     insertHtmlAtCaret(`<h${level} class="mt-4 mb-2 font-semibold">${escapeHtml(text)}</h${level}>`, editorRef);
@@ -2309,6 +2482,15 @@ export default function DocumentPane({ docId }: { docId: string }) {
             {/* 에디터 placeholder */}
             <style jsx>{`
               [contenteditable][data-placeholder]:empty:before { content: attr(data-placeholder); color: #9ca3af; pointer-events: none; }
+              [data-editor-placeholder='1'] { opacity: 0.5; }
+              [data-editor-selected='1']::after {
+                content: "";
+                position: absolute;
+                inset: -4px;
+                border-radius: 16px;
+                border: 2px solid #6366f1;
+                pointer-events: none;
+              }
             `}</style>
 
             {/* 이미지 파일 입력(숨김) */}
@@ -2543,6 +2725,8 @@ function getEditorHtml(ref: React.RefObject<HTMLDivElement>) {
   if (!root) return "";
   const clone = root.cloneNode(true) as HTMLElement;
   clone.querySelectorAll<HTMLElement>("[data-editor-ui]").forEach((el) => el.remove());
+  clone.querySelectorAll<HTMLElement>("[data-editor-placeholder='1']").forEach((el) => el.remove());
+  clone.querySelectorAll<HTMLElement>("[data-editor-selected]").forEach((el) => el.removeAttribute("data-editor-selected"));
   clone.querySelectorAll<HTMLElement>("[data-block][data-sc-enhanced]").forEach((el) => {
     el.removeAttribute("data-sc-enhanced");
     el.removeAttribute("data-dragging");
@@ -2564,6 +2748,16 @@ function getEditorHtml(ref: React.RefObject<HTMLDivElement>) {
     wrapper.remove();
   });
   return clone.innerHTML.trim();
+}
+
+function createEmptyParagraphBlock(): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.setAttribute("data-block", "paragraph");
+  wrapper.className = "sc-block";
+  const p = document.createElement("p");
+  p.innerHTML = "<br>";
+  wrapper.appendChild(p);
+  return wrapper;
 }
 function setEditorHtml(ref: React.RefObject<HTMLDivElement>, html: string) { if (ref.current) ref.current.innerHTML = html || ""; }
 function blockHtml(blocks: Block[]) {
